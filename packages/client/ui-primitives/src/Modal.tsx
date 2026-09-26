@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import { IconCloseOutlineRegular } from './icons/index.tsx'
 import { useModalLayer } from './useModalLayer.ts'
+import { usePortalDocument } from './PortalDocument.tsx'
 import css from './Modal.module.css'
 
 interface ModalBaseProps {
@@ -50,6 +51,7 @@ export function Modal({
   onKeyDownCapture, headless = false, backdropBlur = true, shortcutModal,
 }: ModalProps) {
   const dialog = useRef<HTMLDivElement>(null)
+  const portalDocument = usePortalDocument()
   useModalLayer(dialog, open, onClose)
 
   if (!open) return null
@@ -87,5 +89,5 @@ export function Modal({
           )}
       </div>
     </div>
-  ), document.body)
+  ), portalDocument.body)
 }

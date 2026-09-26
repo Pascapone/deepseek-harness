@@ -106,7 +106,7 @@ export function useFloatGestures(state: LayoutState, intents: DockIntents) {
  * @param props - owning pane/tab, localized labels and gesture callbacks.
  * @returns the float header without a content container.
  */
-export function FloatHeader({ paneId, tab, labels, intents, renderTabTitle, canCloseTab, drag }: {
+export function FloatHeader({ paneId, tab, labels, intents, renderTabTitle, canCloseTab, drag, movable = true }: {
   readonly paneId: PaneId
   readonly tab: TabRecord
   readonly labels: DockLabels
@@ -114,10 +114,11 @@ export function FloatHeader({ paneId, tab, labels, intents, renderTabTitle, canC
   readonly renderTabTitle: TabRenderer | undefined
   readonly canCloseTab: ((id: TabId) => boolean) | undefined
   readonly drag: ReturnType<typeof useFloatGestures>['drag']
+  readonly movable?: boolean
 }): ReactNode {
   return (
     <header className={clsx(css.tabStrip, css.floatHeader)} data-dockkit-float-grip={paneId}
-      onPointerDown={(event) => { drag('move', paneId, event) }}>
+      onPointerDown={(event) => { if (movable) drag('move', paneId, event) }}>
       <div className={clsx(css.tab, css.floatTitle)} data-dockkit-float-title>
         <TabTitle>{renderTabTitle?.(tab) ?? tab.title}</TabTitle>
       </div>

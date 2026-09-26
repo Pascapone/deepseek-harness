@@ -309,9 +309,22 @@ export function createSidebarRightStore(
         d.bySession = seat(d, sessionId, s => advance(s, (state, mint) => {
           const { kind, contentId, title, replaceTab: replace } = intent
           const ops: LayoutOp[] = [...planSetExpanded(state, true)]
-          // A replaced tab lends its pane and slot; one that floats cannot (a
-          // floating pane holds one tab), so the new tab lands as if unplaced.
           const replaced = replace === undefined ? undefined : findTabPane(state, replace)
+          if (replaced?.host === 'float' && replace !== undefined) {
+            const existing = state.tabs[replace]
+            if (existing?.kind === kind && existing.contentId === contentId && intent.revealIfOpened !== false) {
+              settled(replace)
+              return [...ops, ...planFocusTab(state, replace)]
+            }
+            // Keep the one-tab floating pane (and its satellite) when its guide opens a module.
+            const tab = { id: mint('tab'), kind, contentId, title }
+            ops.push({ type: 'closeTab', tabId: replace },
+              { type: 'insertPane', pane: { ...replaced, tabs: [tab.id], activeTabId: tab.id }, tabs: [tab],
+                attach: { mode: 'float', index: state.floats.indexOf(replaced.id) } },
+              { type: 'focusTab', tabId: tab.id })
+            settled(tab.id)
+            return ops
+          }
           const lent = replace !== undefined && replaced !== undefined && replaced.host === 'dock' ? replaced : undefined
           const paneId = lent?.id ?? intent.paneId
           const index = lent === undefined || replace === undefined ? undefined : lent.tabs.indexOf(replace)

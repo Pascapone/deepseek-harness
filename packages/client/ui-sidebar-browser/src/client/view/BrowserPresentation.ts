@@ -5,5 +5,5 @@ export interface BrowserPresentation {
    * @param viewportId - content element id; its DOM ancestors must remain connected for page retention.
    * @returns ends physical attachment, without disposing the navigation model; a later mount may reload the page.
    */
-  mount(viewportId: string): () => void
+  mount(viewportId: string, viewport?: HTMLElement): () => void
 }

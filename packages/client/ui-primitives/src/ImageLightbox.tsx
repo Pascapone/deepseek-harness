@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { IconCloseOutlineRegular } from './icons/index.tsx'
 import css from './ImageLightbox.module.css'
+import { usePortalDocument } from './PortalDocument.tsx'
 
 /** Lightbox strings the owner resolves from its own locale namespace. */
 export interface ImageLightboxLabels {
@@ -30,22 +31,25 @@ export function ImageLightbox({ src, alt, labels, onClose }: {
   labels: ImageLightboxLabels
   onClose: () => void
 }) {
+  const portalDocument = usePortalDocument()
+  const portalWindow = portalDocument.defaultView ?? window
   const closeRef = useRef<HTMLButtonElement | null>(null)
   const restoreRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
-    restoreRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const active = portalDocument.activeElement
+    restoreRef.current = active?.nodeType === 1 ? active as HTMLElement : null
     closeRef.current?.focus()
     const onKeyDown = (event: globalThis.KeyboardEvent): void => {
       if (event.key === 'Escape') { event.stopPropagation(); onClose() }
       if (event.key === 'Tab') { event.preventDefault(); closeRef.current?.focus() }
     }
-    window.addEventListener('keydown', onKeyDown, true)
+    portalWindow.addEventListener('keydown', onKeyDown, true)
     return () => {
-      window.removeEventListener('keydown', onKeyDown, true)
+      portalWindow.removeEventListener('keydown', onKeyDown, true)
       restoreRef.current?.focus()
     }
-  }, [onClose])
+  }, [onClose, portalDocument, portalWindow])
 
   return createPortal(
     <div
@@ -60,6 +64,6 @@ export function ImageLightbox({ src, alt, labels, onClose }: {
         <IconCloseOutlineRegular size={16} />
       </button>
     </div>,
-    document.body,
+    portalDocument.body,
   )
 }

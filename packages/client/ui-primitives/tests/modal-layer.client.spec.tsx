@@ -1,12 +1,50 @@
 // @vitest-environment jsdom
 import { useState } from 'react'
+import { JSDOM } from 'jsdom'
 import { afterEach, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { Modal } from '../src/Modal.tsx'
+import { PortalDocument } from '../src/PortalDocument.tsx'
 import { closeTopModal, isBehindModal } from '../src/useModalLayer.ts'
 import { Menu } from '../src/Menu.tsx'
 
 afterEach(cleanup)
+it('restores modal focus to its opener in an external window', () => {
+  const popup = new JSDOM('<!doctype html><html><body><button>Open</button><div id="root"></div></body></html>')
+  try {
+    const doc = popup.window.document
+    const opener = doc.querySelector('button') as HTMLButtonElement
+    opener.focus()
+    expect(opener instanceof HTMLElement).toBe(false)
+    const modal = (open: boolean) => <PortalDocument.Provider value={doc}>
+      <Modal open={open} title="External" closeLabel="Close" onClose={() => {}} />
+    </PortalDocument.Provider>
+    const view = render(modal(true), { container: doc.getElementById('root') as HTMLElement })
+    expect(doc.activeElement).not.toBe(opener)
+    view.rerender(modal(false))
+    expect(doc.activeElement).toBe(opener)
+    view.unmount()
+  } finally { popup.window.close() }
+})
+it('handles a portaled menu Escape in its popup document before its modal', () => {
+  const popup = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { pretendToBeVisual: true })
+  try {
+    const doc = popup.window.document
+    const menuClose = vi.fn(), modalClose = vi.fn()
+    const view = render(<PortalDocument.Provider value={doc}>
+      <Modal open title="External" closeLabel="Close" onClose={modalClose}>
+        <Menu open portal autoFocus anchor={<button>Menu</button>} items={[{ id: 'action', label: 'Action' }]}
+          onClose={menuClose} onSelect={() => {}} />
+      </Modal>
+    </PortalDocument.Provider>, { container: doc.getElementById('root') as HTMLElement })
+    const item = doc.querySelector<HTMLElement>('[role="menuitem"]') as HTMLElement
+    expect(doc.activeElement).toBe(item)
+    fireEvent.keyDown(item, { key: 'Escape' })
+    expect(menuClose).toHaveBeenCalledOnce()
+    expect(modalClose).not.toHaveBeenCalled()
+    view.unmount()
+  } finally { popup.window.close() }
+})
 function Nested({ withSearch = true }: { withSearch?: boolean }) {
   const [settings, setSettings] = useState(false)
   const [reference, setReference] = useState(false)

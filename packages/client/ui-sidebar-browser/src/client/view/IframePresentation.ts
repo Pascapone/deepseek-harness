@@ -30,8 +30,8 @@ export class IframePresentation implements BrowserPresentation {
   constructor(private readonly events: IframePresentationEvents) {}
 
   /** @param viewportId - mounted placeholder. @returns removes only the iframe presentation. */
-  mount(viewportId: string): () => void {
-    const host = document.getElementById(viewportId)
+  mount(viewportId: string, viewport?: HTMLElement): () => void {
+    const host = viewport ?? document.getElementById(viewportId)
     if (host === null) throw new Error('iframe presentation: viewport is not mounted')
     this.element?.remove()
     this.element = undefined
@@ -68,7 +68,7 @@ export class IframePresentation implements BrowserPresentation {
     const host = this.host
     if (current === undefined || host === undefined) return
     this.element?.remove()
-    const element = document.createElement('iframe')
+    const element = host.ownerDocument.createElement('iframe')
     element.className = css.frame as string
     element.src = current.target.url
     element.title = current.target.title

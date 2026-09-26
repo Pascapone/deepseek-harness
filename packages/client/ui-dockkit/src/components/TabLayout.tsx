@@ -1,7 +1,9 @@
 /** Stable tab siblings in one horizontal Grid, including viewport-positioned floats. */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { MutableRefObject, ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import clsx from 'clsx'
+import { PortalDocument } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { DockIntents } from '../contract/adapter.ts'
 import type { LayoutState, PaneNode, TabId, TabRecord } from '../contract/types.ts'
 import { findTabPane, floatRect, getNode, getPane } from '../engine/tree.ts'
@@ -17,6 +19,8 @@ export interface TabRetention {
   readonly keepMounted?: (tab: TabRecord) => boolean
   /** Whether this layout's Session is on screen; defaults to true. */
   readonly active?: boolean
+  /** An externally owned window mount for a floating tab. */
+  readonly popoutTarget?: (tabId: TabId) => HTMLElement | undefined
 }
 
 interface LayoutProps extends TabRetention {
@@ -36,7 +40,7 @@ interface TabHostProps extends LayoutProps {
 
 /** A tab's ancestors stay identical across selection, pane moves and floating. */
 function TabHost({ state, callbacks, intents, tab, pane, column, floats, focusRequest, keepMounted,
-  active = true }: TabHostProps): ReactNode {
+  active = true, popoutTarget }: TabHostProps): ReactNode {
   const floating = pane.host === 'float'
   const selected = floating || pane.activeTabId === tab.id
   const visible = active && selected && (floating || state.expanded)
@@ -45,17 +49,28 @@ function TabHost({ state, callbacks, intents, tab, pane, column, floats, focusRe
   if (visible && !visited) setVisited(true)
   const host = useRef<HTMLElement | null>(null)
   const body = useRef<HTMLDivElement | null>(null)
+  const cell = useRef<HTMLDivElement | null>(null)
+  const [mount] = useState(() => {
+    const element = document.createElement('div')
+    element.style.display = 'contents'
+    return element
+  })
+  const target = floating ? popoutTarget?.(tab.id) : undefined
+  useLayoutEffect(() => {
+    (target ?? cell.current)?.append(mount)
+  }, [target, mount])
   useLayoutEffect(() => {
     // Both refs target unconditional descendants attached before these effects.
     const section = host.current as HTMLElement
     section.inert = !visible
-    const focused = document.activeElement
-    if (!visible && focused instanceof HTMLElement && section.contains(focused)) focused.blur()
+    const focused = section.ownerDocument.activeElement
+    if (!visible && focused?.nodeType === 1 && section.contains(focused)) (focused as HTMLElement).blur()
     const request = focusRequest.current
     if (!visible || request?.tabId !== tab.id) return
     focusRequest.current = undefined
     // Preserve deliberate focus taken by another control or the newly shown body.
-    if (focused !== null && focused !== document.body && focused !== document.documentElement && focused !== request.origin) return
+    const doc = section.ownerDocument
+    if (focused !== null && focused !== doc.body && focused !== doc.documentElement && focused !== request.origin) return
     const strip = section.querySelector('[data-dockkit-strip]')
     const chip = [...strip?.querySelectorAll<HTMLElement>('[data-dockkit-tab]') ?? []]
       .find(element => element.dataset.dockkitTab === tab.id)
@@ -77,34 +92,37 @@ function TabHost({ state, callbacks, intents, tab, pane, column, floats, focusRe
   const depth = lifted === undefined ? state.floats.indexOf(pane.id) + 1 : state.floats.length + 1
   return (
     <div className={clsx(css.tabCell, floating && css.floatingCell)} hidden={!selected}
+      ref={(element) => { cell.current = element; if (element !== null && mount.parentNode === null) element.append(mount) }}
       data-dockkit-host={floating ? 'float' : 'dock'} data-dockkit-column={floating ? undefined : column}
       style={{ gridColumn: floating ? 1 : column * 2 + 1, gridRow: 1, order: floating ? depth : 0 }}>
-      <section ref={host} tabIndex={-1} className={clsx(css.tabHost, floating ? css.float : css.pane)}
-        aria-hidden={!visible || undefined}
-        data-dockkit-content={tab.id}
-        data-dockkit-pane={!floating && selected ? pane.id : undefined}
-        data-dockkit-pane-active={!floating && state.activePaneId === pane.id || undefined}
-        data-dockkit-float={floating ? pane.id : undefined}
-        data-dockkit-float-active={floating && state.activePaneId === pane.id || undefined}
-        data-dockkit-column={!floating ? column : undefined}
-        style={rect === undefined ? undefined : {
-          left: rect.x, top: rect.y, width: rect.width, height: rect.height,
-        }}
-        onPointerDown={() => { if (floating) floats.raise(pane.id) }}
-        onClick={() => { if (!floating && state.activePaneId !== pane.id) callbacks.onFocusPane(pane.id) }}>
-        <div className={css.tabHostHeader}>
-          {selected && (floating
-            ? <FloatHeader paneId={pane.id} tab={tab} labels={callbacks.labels} intents={intents}
-              renderTabTitle={callbacks.renderTabTitle} canCloseTab={callbacks.canCloseTab} drag={floats.drag} />
-            : <TabStrip state={state} pane={pane} callbacks={callbacks} />)}
-        </div>
-        <div ref={body} className={clsx(css.tabHostBody, floating ? css.floatBody : css.paneBody)}>
-          {visited && (retained || (active && selected)) ? callbacks.renderTab(tab) : null}
-          {!floating && <PaneDropHints pane={pane} callbacks={callbacks} />}
-        </div>
-        {floating && <div className={css.floatResize} data-dockkit-float-resize={pane.id}
-          onPointerDown={(event) => { floats.drag('resize', pane.id, event) }} />}
-      </section>
+      {createPortal(<PortalDocument.Provider value={target?.ownerDocument ?? document}>
+        <section ref={host} tabIndex={-1} className={clsx(css.tabHost, floating ? css.float : css.pane)}
+          aria-hidden={!visible || undefined}
+          data-dockkit-content={tab.id}
+          data-dockkit-pane={!floating && selected ? pane.id : undefined}
+          data-dockkit-pane-active={!floating && state.activePaneId === pane.id || undefined}
+          data-dockkit-float={floating ? pane.id : undefined}
+          data-dockkit-float-active={floating && state.activePaneId === pane.id || undefined}
+          data-dockkit-column={!floating ? column : undefined}
+          style={rect === undefined ? undefined : {
+            left: rect.x, top: rect.y, width: rect.width, height: rect.height,
+          }}
+          onPointerDown={() => { if (floating) floats.raise(pane.id) }}
+          onClick={() => { if (!floating && state.activePaneId !== pane.id) callbacks.onFocusPane(pane.id) }}>
+          <div className={css.tabHostHeader}>
+            {selected && (floating
+              ? <FloatHeader paneId={pane.id} tab={tab} labels={callbacks.labels} intents={intents}
+                renderTabTitle={callbacks.renderTabTitle} canCloseTab={callbacks.canCloseTab} drag={floats.drag}
+                movable={target === undefined} />
+              : <TabStrip state={state} pane={pane} callbacks={callbacks} />)}
+          </div>
+          <div ref={body} className={clsx(css.tabHostBody, floating ? css.floatBody : css.paneBody)}>
+            {visited && (retained || (active && selected)) ? callbacks.renderTab(tab) : null}
+            {!floating && <PaneDropHints pane={pane} callbacks={callbacks} />}
+          </div>
+          {floating && target === undefined && <div className={css.floatResize} data-dockkit-float-resize={pane.id}
+            onPointerDown={(event) => { floats.drag('resize', pane.id, event) }} />}
+        </section></PortalDocument.Provider>, mount)}
     </div>
   )
 }

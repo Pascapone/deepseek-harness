@@ -10,6 +10,7 @@ import { observeComposition } from './keyboard-composition.ts'
 import { focusWithoutRing } from './focus.ts'
 import { ShortcutKeys } from './ShortcutKeys.tsx'
 import { MenuSurface } from './MenuSurface.tsx'
+import { usePortalDocument } from './PortalDocument.tsx'
 import css from './Menu.module.css'
 
 /** Selectable row (optionally with a nested submenu). */
@@ -133,7 +134,7 @@ const MEASURE_STYLE: CSSProperties = { visibility: 'hidden', left: 0, top: 0 }
  * cross-origin iframe leaves).
  * @param props.align - list alignment against the anchor (default 'start').
  * @param props.side - open below (`bottom`, default) or above (`top`) the anchor.
- * @param props.portal - render the list into document.body, fixed-positioned
+ * @param props.portal - render the list into portalDocument.body, fixed-positioned
  * from the anchor rect (follows movement and resizing while open). Use when an
  * ancestor's overflow clipping would crop the in-place list; default false
  * keeps the pure-CSS in-place behavior.
@@ -162,7 +163,7 @@ const MEASURE_STYLE: CSSProperties = { visibility: 'hidden', left: 0, top: 0 }
  * @param props.className - extra class on the anchor wrapper span.
  * @param props.listClassName - extra class on the dropdown card itself; the
  * only style hook that reaches a portaled list, which renders under
- * document.body outside the owner's DOM subtree.
+ * portalDocument.body outside the owner's DOM subtree.
  * @returns anchor wrapper with the conditional list.
  */
 export function Menu({ open, anchor, items = [], children, selectedId, selectedIds, onSelect, onClose, align = 'start', side = 'bottom', portal = false, closeOnPointerLeave = false, dense = false, compact = false, autoFocus = false, selection = 'check', getAnchorRect, footer, className, listClassName }: {
@@ -187,6 +188,8 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
   className?: string | undefined
   listClassName?: string | undefined
 }) {
+  const portalDocument = usePortalDocument()
+  const portalWindow = portalDocument.defaultView ?? window
   const rootRef = useRef<HTMLSpanElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   /** Index the arrow walk last focused, the resume point when focus left the rows. */
@@ -208,7 +211,7 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
    */
   const refocusAnchor = (navigation = false): void => {
     const trigger = triggerRef.current
-    const target = trigger !== null && document.contains(trigger) && !(trigger as HTMLButtonElement).disabled
+    const target = trigger !== null && portalDocument.contains(trigger) && !(trigger as HTMLButtonElement).disabled
       ? trigger : rootRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')
     if (target == null) return
     if (navigation) target.focus()
@@ -226,8 +229,8 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
     const navigation = selectingWithTab.current
     queueMicrotask(() => {
       if (openRef.current) return
-      const active = document.activeElement
-      if (active === null || active === document.body || listRef.current?.contains(active) === true) refocusAnchor(navigation)
+      const active = portalDocument.activeElement
+      if (active === null || active === portalDocument.body || listRef.current?.contains(active) === true) refocusAnchor(navigation)
     })
   }
   const openRef = useRef(open)
@@ -253,8 +256,8 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
       }
       if (r === null) return
       const MARGIN = 12
-      const vw = window.innerWidth
-      const vh = window.innerHeight
+      const vw = portalWindow.innerWidth
+      const vh = portalWindow.innerHeight
       const listEl = listRef.current
       const lw = listEl?.offsetWidth ?? 0
       const lh = listEl?.offsetHeight ?? 0
@@ -284,17 +287,17 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
     // Dragging or transforming an ancestor moves the anchor without a scroll or resize event.
     const track = () => {
       place()
-      frame = requestAnimationFrame(track)
+      frame = portalWindow.requestAnimationFrame(track)
     }
-    let frame = requestAnimationFrame(track)
-    window.addEventListener('scroll', place, true)
-    window.addEventListener('resize', place)
+    let frame = portalWindow.requestAnimationFrame(track)
+    portalWindow.addEventListener('scroll', place, true)
+    portalWindow.addEventListener('resize', place)
     return () => {
-      cancelAnimationFrame(frame)
-      window.removeEventListener('scroll', place, true)
-      window.removeEventListener('resize', place)
+      portalWindow.cancelAnimationFrame(frame)
+      portalWindow.removeEventListener('scroll', place, true)
+      portalWindow.removeEventListener('resize', place)
     }
-  }, [open, portal, align, side, getAnchorRect])
+  }, [open, portal, align, side, getAnchorRect, portalWindow])
 
   // Opening remembers where the keyboard was, so closing can hand it back to
   // that control — an anchor wrapping several (a split button) cannot be asked
@@ -305,9 +308,9 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
       triggerRef.current = null
       return
     }
-    const active = document.activeElement
-    triggerRef.current = active instanceof HTMLElement && rootRef.current?.contains(active) === true ? active : null
-  }, [open])
+    const active = portalDocument.activeElement
+    triggerRef.current = active?.nodeType === 1 && rootRef.current?.contains(active) === true ? active as HTMLElement : null
+  }, [open, portalDocument, portalWindow])
 
   useEffect(() => {
     if (!open || !autoFocus) return
@@ -322,19 +325,20 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
       walkIndex.current = null
       return
     }
-    const composition = observeComposition(document)
+    const composition = observeComposition(portalDocument)
     const onPointerDown = (e: PointerEvent) => {
-      if (!(e.target instanceof Node)) return
+      if (e.target === null || !('nodeType' in e.target)) return
+      const target = e.target as Node
       // The portaled list is outside the anchor subtree; check both.
-      if (rootRef.current?.contains(e.target) === true) return
-      if (listRef.current?.contains(e.target) === true) return
+      if (rootRef.current?.contains(target) === true) return
+      if (listRef.current?.contains(target) === true) return
       onClose()
     }
     const onKeyDown = (e: KeyboardEvent) => {
       if (composition.guards(e) || isBehindModal(rootRef.current) || e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey) return
       // Where the keyboard is, computed once: the menu owns it when it holds a
       // row or sits on its anchor region.
-      const focused = document.activeElement
+      const focused = portalDocument.activeElement
       const insideList = listRef.current?.contains(focused) === true
       const anchored = rootRef.current?.contains(focused) === true || insideList
       if (e.key === 'Escape' && !e.shiftKey) {
@@ -364,7 +368,7 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
         // button inside an error strip) and a list with no enabled row keep the
         // browser's traversal instead of being swallowed.
         if (insideList) {
-          if (focused instanceof Element && focused.getAttribute('role') === 'menuitem') {
+          if (focused?.nodeType === 1 && (focused as Element).getAttribute('role') === 'menuitem') {
             e.preventDefault()
             selectingWithTab.current = true
             try { (focused as HTMLElement).click() }
@@ -383,7 +387,7 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
       // open, so `autoFocus` chooses only that entry behavior. A keyboard still
       // on the anchor enters at the end the step comes from — unless it already
       // walked, in which case the walk resumes where it left off. The walk resumes
-      // from where it last put focus, not from `document.activeElement`: a row
+      // from where it last put focus, not from `portalDocument.activeElement`: a row
       // that refused focus (a hidden portal frame, a detached node) would
       // otherwise re-enter at the near end on every press and the walk would
       // alternate between two rows.
@@ -407,22 +411,22 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
     // instead. Only that case closes: an app or tab switch leaves the
     // document's focus where it was, so activeElement is not an iframe.
     const onWindowBlur = () => {
-      if (document.activeElement instanceof HTMLIFrameElement) onClose()
+      if (portalDocument.activeElement?.tagName === 'IFRAME') onClose()
     }
-    document.addEventListener('pointerdown', onPointerDown)
+    portalDocument.addEventListener('pointerdown', onPointerDown)
     const onEscape = (event: KeyboardEvent): void => { if (event.key === 'Escape') onKeyDown(event) }
     const onOtherKey = (event: KeyboardEvent): void => { if (event.key !== 'Escape') onKeyDown(event) }
-    document.addEventListener('keydown', onOtherKey)
-    document.addEventListener('keydown', onEscape, true)
-    window.addEventListener('blur', onWindowBlur)
+    portalDocument.addEventListener('keydown', onOtherKey)
+    portalDocument.addEventListener('keydown', onEscape, true)
+    portalWindow.addEventListener('blur', onWindowBlur)
     return () => {
       composition.dispose()
-      document.removeEventListener('pointerdown', onPointerDown)
-      document.removeEventListener('keydown', onOtherKey)
-      document.removeEventListener('keydown', onEscape, true)
-      window.removeEventListener('blur', onWindowBlur)
+      portalDocument.removeEventListener('pointerdown', onPointerDown)
+      portalDocument.removeEventListener('keydown', onOtherKey)
+      portalDocument.removeEventListener('keydown', onEscape, true)
+      portalWindow.removeEventListener('blur', onWindowBlur)
     }
-  }, [open, onClose, autoFocus])
+  }, [open, onClose, autoFocus, portalDocument, portalWindow])
 
   // A close from selection/Escape/outside click outruns a pending grace close;
   // left armed it would shut a list reopened inside the grace window. Its own
@@ -558,7 +562,7 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
       onPointerLeave={closeOnPointerLeave ? () => { if (open) armClose() } : undefined}
     >
       {anchor}
-      {portal ? (list !== false && createPortal(list, document.body)) : list}
+      {portal ? (list !== false && createPortal(list, portalDocument.body)) : list}
     </span>
   )
 }

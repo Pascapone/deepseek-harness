@@ -170,7 +170,7 @@
   background: var(--dsw-alias-bg-base);
 }
 
-.tabCell[data-dockkit-host='dock'][data-dockkit-column='0'] > .tabHost {
+.tabCell[data-dockkit-host='dock'][data-dockkit-column='0'] .tabHost {
   border-left: 0.5px solid var(--dsw-alias-border-l4);
 }
 

@@ -43,6 +43,7 @@ export function useAnchoredPosition(options: AnchoredPositionOptions): CSSProper
       setPosition(null)
       return
     }
+    const view = anchorRef.current?.ownerDocument.defaultView ?? window
     const place = () => {
       /* v8 ignore start -- geometry read from real layout: jsdom reports zero
          offset sizes, so the positive-size clamp arms are exercised by browser
@@ -54,16 +55,16 @@ export function useAnchoredPosition(options: AnchoredPositionOptions): CSSProper
       const height = panel?.offsetHeight ?? 0
       let left = align === 'end' ? rect.right - width : rect.left
       let top = side === 'top' ? rect.top - gap - height : rect.bottom + gap
-      if (width > 0) left = Math.min(Math.max(left, margin), window.innerWidth - width - margin)
-      if (height > 0) top = Math.min(Math.max(top, margin), window.innerHeight - height - margin)
+      if (width > 0) left = Math.min(Math.max(left, margin), view.innerWidth - width - margin)
+      if (height > 0) top = Math.min(Math.max(top, margin), view.innerHeight - height - margin)
       /* v8 ignore stop */
       setPosition({ left, top })
     }
     // The first run measures the panel in the same commit that opened it, so
     // the clamp uses real dimensions before anything paints.
     place()
-    window.addEventListener('scroll', place, true)
-    window.addEventListener('resize', place)
+    view.addEventListener('scroll', place, true)
+    view.addEventListener('resize', place)
     // The panel's own height changes without either event — a status line
     // appearing inside it, or a `resize: vertical` textarea dragged taller —
     // and a stale clamp would let a panel near the bottom edge cross the
@@ -77,8 +78,8 @@ export function useAnchoredPosition(options: AnchoredPositionOptions): CSSProper
     }
     return () => {
       observer?.disconnect()
-      window.removeEventListener('scroll', place, true)
-      window.removeEventListener('resize', place)
+      view.removeEventListener('scroll', place, true)
+      view.removeEventListener('resize', place)
     }
   }, [open, anchorRef, panelRef, side, align, gap, margin])
   return position

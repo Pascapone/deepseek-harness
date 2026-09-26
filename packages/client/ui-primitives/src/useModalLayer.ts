@@ -89,7 +89,8 @@ export function useModalLayer(dialog: RefObject<HTMLElement | null>, open: boole
       document.removeEventListener('keydown', keydown)
       if (stack.length === 0) layers.delete(document)
       if (wasTop) {
-        const target = previous instanceof HTMLElement && previous.isConnected ? previous : stack.at(-1)?.element
+        const target = previous instanceof (document.defaultView?.HTMLElement ?? HTMLElement) && previous.isConnected
+          ? previous : stack.at(-1)?.element
         if (target !== undefined) focusWithoutRing(target)
       }
     }

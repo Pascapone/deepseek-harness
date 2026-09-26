@@ -52,6 +52,7 @@ export function BrowserBody(props: BrowserBodyProps): ReactNode {
   const initial = useRef(saved)
   const initialUrl = useRef(tab.navigation.params?.url)
   const viewportId = useId()
+  const viewport = useRef<HTMLDivElement | null>(null)
   const [mountEpoch, setMountEpoch] = useState(0)
   const state = useBrowserState(tab.id)
   const frame = state?.frame ?? EMPTY_FRAME
@@ -61,7 +62,8 @@ export function BrowserBody(props: BrowserBodyProps): ReactNode {
 
   useLayoutEffect(() => {
     const hide = mount({
-      tabId: tab.id, signal: tab.signal, viewportId, applicationOrigin: window.location.origin,
+      tabId: tab.id, signal: tab.signal, viewportId, viewport: viewport.current ?? undefined,
+      applicationOrigin: window.location.origin,
       initial: initial.current, initialUrl: initialUrl.current,
       openTab: (url) => { tab.actions.openTab('browser', { params: { url }, revealIfOpened: false }) },
     })
@@ -114,7 +116,7 @@ export function BrowserBody(props: BrowserBodyProps): ReactNode {
         : t('load.failed')}</div>}
       {failure !== undefined && <div className={css.failure} role="alert">{t(`error.${failure}`)}</div>}
       <div className={css.content} aria-busy={frame.loading}>
-        <div id={viewportId} className={css.viewport} aria-label={t('type.label')} />
+        <div ref={viewport} id={viewportId} className={css.viewport} aria-label={t('type.label')} />
         {restoreTarget !== undefined && <section className={css.restore} aria-label={t('restore.previous')}>
           <p className={css.restoreLabel}>{t('restore.previous')}</p>
           <p className={css.restoreTitle}>{restoreTarget.title}</p>
