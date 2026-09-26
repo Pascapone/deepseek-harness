@@ -84,17 +84,23 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   {
     key: 'agentDefaultModel',
     summary: 'Owns the default model selection independently of any Host or transport.',
-    description: 'Owns the default model selection independently of any Host or transport. Each operation reads the owning Config references.',
+    description: 'Owns the default model selection independently of any Host or transport. Scoped registrations take precedence over the live deployment Config references.',
     methods: [
       {
-        signature: 'currentSelection(): ModelSelection',
-        description: 'Read the current default model selection.',
-        parameters: [],
+        signature: 'registerScoped(next: ModelSelection): () => void',
+        description: 'Register one fallback for the calling scope and its descendants without writing the profile. Duplicate registrations in one scope and unscoped callers fail. Unloading the owner removes it.',
+        parameters: [{ name: 'next', description: 'selection whose route availability is validated by the request consumer.' }],
+        returns: 'the disposer for this registration.',
+      },
+      {
+        signature: 'currentSelection(scope: ScopeKey | undefined = scopeOf(this.ctx)): ModelSelection',
+        description: 'Read the nearest scoped default, falling back to the live profile selection.',
+        parameters: [{ name: 'scope', description: 'target identity; omission uses the calling context\'s scope.' }],
         returns: 'a detached provider, model, and optional reasoning selection.',
       },
       {
         signature: 'async saveSelection(next: ModelSelection): Promise<void>',
-        description: 'Save the complete default model selection. A deployment without a configuration editor keeps its composition entry.',
+        description: 'Save the complete deployment default selection. A deployment without a configuration editor keeps its composition entry.',
         parameters: [{ name: 'next', description: 'resolved selection accepted by an entry point.' }],
         returns: 'fulfillment after the optional profile write settles.',
       },
@@ -1836,6 +1842,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Describe every currently routable model for Host-generation selectors.',
         parameters: [],
         returns: 'provider-grouped models, the deployment default, and isolated provider failures.',
+      },
+      {
+        signature: '@Remote(\'modelDefault\') async modelDefault(request: { readonly sessionId: SessionId }, signal: AbortSignal): Promise<ModelSelection | null>',
+        description: 'Read a Session\'s model fallback without activating its Agent or writing a selection. Live Agents retain their exact preset revision; cold Sessions use their current preset. Explicit selections and recorded request routes take precedence over this fallback.',
+        parameters: [{ name: 'request', description: 'Session whose scoped default is required.' }, { name: 'signal', description: 'cancellation for the Session observation.' }],
+        returns: 'the scoped or deployment default, or null when the Session does not exist.',
       },
       {
         signature: '@Remote canOpenWorkspacePath(): boolean',

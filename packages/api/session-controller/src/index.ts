@@ -30,6 +30,7 @@ import { SessionMediaReferences } from './media-references.ts'
 import { ArchivedSessionGate } from './archived-session-gate.ts'
 import type {
   ModelCatalog,
+  ModelSelection,
   SessionWorkspacePathApplication,
   SessionAttachmentRequest,
   SessionAttachmentValue,
@@ -291,6 +292,27 @@ export class SessionController extends TypertRemoteService {
   @Remote('modelCatalog')
   modelCatalog(): Promise<ModelCatalog> {
     return buildModelCatalog(this.ctx)
+  }
+
+  /**
+   * Read a Session's model fallback without activating its Agent or writing a selection.
+   * Live Agents retain their exact preset revision; cold Sessions use their current preset.
+   * Explicit selections and recorded request routes take precedence over this fallback.
+   * @param request - Session whose scoped default is required.
+   * @param signal - cancellation for the Session observation.
+   * @returns the scoped or deployment default, or null when the Session does not exist.
+   */
+  @Remote('modelDefault')
+  async modelDefault(request: { readonly sessionId: SessionId }, signal: AbortSignal): Promise<ModelSelection | null> {
+    const projection = await this.projections(request, signal)
+    if (projection === null) return null
+    const agent = this.ctx.agents.get(request.sessionId)
+    if (agent !== undefined) return this.ctx.agentDefaultModel.currentSelection(agent)
+    const presets = this.ctx.get('agentPresets')
+    if (presets === undefined) return this.ctx.agentDefaultModel.currentSelection()
+    await using scope = await presets.acquireScope(projection.values.agentPreset ?? undefined)
+    if (signal.aborted) throw new RemoteError('gateway/cancelled', 'Model default read was cancelled', {})
+    return this.ctx.agentDefaultModel.currentSelection(scope.key)
   }
 
   /**

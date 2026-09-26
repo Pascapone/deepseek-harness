@@ -54,6 +54,8 @@ const selection = ctx.agentDefaultModel.currentSelection()
 await ctx.agentDefaultModel.saveSelection({ provider, model, reasoningEffort: 'high' })
 ```
 
+Preset plugins can call `registerScoped(selection)` through an injected `agentDefaultModel` service. The registration belongs to the calling scope, is inherited by descendants, and disappears when its plugin unloads. A nearer scope overrides its ancestor; duplicate defaults in one scope and unscoped registrations fail. `currentSelection(scope)` reads that scope's fallback without changing the profile; omitting the argument uses the calling context's scope. Consumers retain responsibility for giving explicit or recorded session selections precedence.
+
 Without a configuration editor, `saveSelection()` is a no-op. The service does not validate catalog membership; the consumer opening a model request owns availability diagnostics.
 
 -----
@@ -75,7 +77,7 @@ The service retains its validated Config references and samples them in `current
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | Live default selection and profile-backed writes |
-| — | No invariant companion is published because Config references are the only owned values. |
+| — | No invariant companion is published because Config references and scoped registrations have no independently cached selection. |
 
 ### Behavior notes
 

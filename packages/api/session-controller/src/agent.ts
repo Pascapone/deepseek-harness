@@ -295,7 +295,7 @@ export class ApiSessionAgentController {
       get current(): AgentModelSelection {
         if (picked !== undefined) return picked
         const loggedHeader = agent.session.requestHeader()
-        if (loggedHeader === undefined) return defaultModel.currentSelection()
+        if (loggedHeader === undefined) return defaultModel.currentSelection(agent)
         const logged = loggedHeader.config
         return {
           provider: logged.provider,

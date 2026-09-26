@@ -831,6 +831,16 @@ inspect( sessionId: SessionId, signal?: AbortSignal, ): Promise<SessionInspectio
 @Remote('modelCatalog') modelCatalog(): Promise<ModelCatalog>
 
 /**
+ * Read a Session's model fallback without activating its Agent or writing a selection.
+ * Live Agents retain their exact preset revision; cold Sessions use their current preset.
+ * Explicit selections and recorded request routes take precedence over this fallback.
+ * @param request - Session whose scoped default is required.
+ * @param signal - cancellation for the Session observation.
+ * @returns the scoped or deployment default, or null when the Session does not exist.
+ */
+@Remote('modelDefault') async modelDefault(request: { readonly sessionId: SessionId }, signal: AbortSignal): Promise<ModelSelection | null>
+
+/**
  * Report whether this deployment can hand a Session workspace path to a native desktop.
  * @returns true when the matching open operation is available.
  */
@@ -938,7 +948,7 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
 @Remote({ mode: 'stream' }) control(signal: AbortSignal): AsyncIterable<SessionControlFrame>
 ```
 
-Types: [SessionId](core.zh.md) · [SessionInspection](persistence.zh.md) · [SessionSearchRequest](session-query.zh.md)
+Types: [ModelSelection](core.zh.md) · [SessionId](core.zh.md) · [SessionInspection](persistence.zh.md) · [SessionSearchRequest](session-query.zh.md)
 
 Source: [`packages/api/session-controller/src/index.ts`](../../packages/api/session-controller/src/index.ts)
 

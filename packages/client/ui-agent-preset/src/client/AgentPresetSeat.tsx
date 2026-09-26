@@ -200,7 +200,7 @@ export function AgentPresetSeat({
             aria-expanded={open}
             title={state.error ?? t('seatHint')}
             disabled={state.busy}
-            onClick={() => { setOpen(value => !value) }}
+            onClick={() => { if (!open) void load(); setOpen(value => !value) }}
           >
             <IconAgentPresetOutlineRegular className={introducing ? `${css.seatIcon} ${css.introIcon}` : css.seatIcon} />
             <span className={css.seatLabel}>{shownLabel}</span>
