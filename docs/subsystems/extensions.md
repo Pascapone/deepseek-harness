@@ -46,12 +46,13 @@ list(): CordisInspectProviderView[]
  * @param input - optional lossless JSON input.
  * @param agent - requesting Agent and scope.
  * @param signal - tool-call cancellation.
- * @returns provider JSON data.
+ * @returns provider JSON data; Client queries reject on cancellation, deadline,
+ * or the first failure after its grace period unless a valid response wins.
  */
 async query( platform: CordisInspectPlatform, providerId: string, methodName: string, input: JsonValue | undefined, agent: Agent, signal: AbortSignal, ): Promise<JsonValue>
 
 /**
- * Accept the first valid Client response for a pending query.
+ * Accept the first valid Client response; retain the first failure for bounded error grace.
  * @param agent - Agent whose Session owns the query.
  * @param requestId - Pending Client query identity.
  * @param resolution - Client provider result or failure.

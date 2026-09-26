@@ -3,6 +3,7 @@
 import { Service } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import z from '@deepseek-ai/schemastery'
 import { snapshotJsonValue, type JsonValue } from '@deepseek-ai/dsh-util-values'
 import { assertSupportedJsonSchema, validateJsonSchemaValue } from '@deepseek-ai/dsh-tools'
 import type { JsonSchemaNode } from '@deepseek-ai/dsh-tools'
@@ -28,10 +29,19 @@ export interface HostCordisInspectProviderRegistration {
   query(method: string, input: JsonValue | undefined, context: HostCordisInspectQueryContext): Promise<JsonValue>
 }
 
+/** Bounds for cross-page inspect queries, in milliseconds. */
+export interface InspectConfig {
+  /** Hard deadline for a Client query, including any error grace period. */
+  inspectQueryTimeoutMs?: number
+  /** Non-resetting grace after the first page failure for another page to succeed. */
+  inspectQueryErrorGraceMs?: number
+}
+
 interface PendingClientQuery {
   request: CordisInspectQueryRequest
   method: CordisInspectMethodManifest
   settle(resolution: CordisInspectQueryResolution): void
+  fail(resolution: Extract<CordisInspectQueryResolution, { ok: false }>): void
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -43,14 +53,26 @@ declare module '@deepseek-ai/cordis' {
 
 /** Registry and cross-page router behind the two model-facing inspect tools. */
 export class CordisInspectRegistryService extends Service {
+  static Config: z<InspectConfig> = z.object({
+    inspectQueryTimeoutMs: z.number().step(1).min(1).max(2_147_483_647).default(30_000),
+    inspectQueryErrorGraceMs: z.number().step(1).min(0).max(2_147_483_647).default(250),
+  })
+
+  private readonly config: Required<InspectConfig>
   private readonly providers = new Map<string, HostCordisInspectProviderRegistration>()
   private readonly pending = new Map<CordisInspectRequestId, PendingClientQuery>()
   private clientManifest: readonly CordisInspectProviderManifest[] | undefined
   private nextRequest = 1
 
   /** Register the process-global Host registry. */
-  constructor(ctx: Context) {
+  constructor(ctx: Context, config: InspectConfig = {}) {
     super(ctx, 'cordisInspect')
+    this.config = CordisInspectRegistryService.Config(config) as Required<InspectConfig>
+    ctx.effect(() => () => {
+      for (const pending of this.pending.values()) {
+        pending.settle({ ok: false, reason: 'cancelled', message: 'Client inspect registry was disposed' })
+      }
+    }, 'cordisInspect: pending queries')
   }
 
   /**
@@ -102,7 +124,8 @@ export class CordisInspectRegistryService extends Service {
    * @param input - optional lossless JSON input.
    * @param agent - requesting Agent and scope.
    * @param signal - tool-call cancellation.
-   * @returns provider JSON data.
+   * @returns provider JSON data; Client queries reject on cancellation, deadline,
+   * or the first failure after its grace period unless a valid response wins.
    */
   async query(
     platform: CordisInspectPlatform,
@@ -126,7 +149,7 @@ export class CordisInspectRegistryService extends Service {
   }
 
   /**
-   * Accept the first valid Client response for a pending query.
+   * Accept the first valid Client response; retain the first failure for bounded error grace.
    * @param agent - Agent whose Session owns the query.
    * @param requestId - Pending Client query identity.
    * @param resolution - Client provider result or failure.
@@ -139,18 +162,20 @@ export class CordisInspectRegistryService extends Service {
   ): CordisInspectResolveAck {
     const pending = this.pending.get(requestId)
     if (pending === undefined || pending.request.agentId !== agent.id) return { accepted: false }
-    if (!resolution.ok) return { accepted: false }
+    if (!resolution.ok) {
+      pending.fail(resolution)
+      return { accepted: false }
+    }
     try {
       resolution = {
         ok: true,
         data: validateOutput('Client', pending.request.provider, pending.method, resolution.data),
       }
-    } catch {
+    } catch (error) {
+      pending.fail({ ok: false, reason: 'provider-error', message: error instanceof Error ? error.message : String(error) })
       return { accepted: false }
     }
-    this.pending.delete(requestId)
     pending.settle(resolution)
-    this.ctx.emit('cordis/inspect-query-resolved', { requestId })
     return { accepted: true }
   }
 
@@ -175,25 +200,50 @@ export class CordisInspectRegistryService extends Service {
       ...input === undefined ? {} : { input },
     }
     const result = new Promise<CordisInspectQueryResolution>((resolve) => {
-      this.pending.set(requestId, { request, method, settle: resolve })
+      let errorTimer: ReturnType<typeof setTimeout> | undefined
+      let firstFailure: Extract<CordisInspectQueryResolution, { ok: false }> | undefined
+      const settle = (resolution: CordisInspectQueryResolution): void => {
+        if (!this.pending.delete(requestId)) return
+        clearTimeout(timeout)
+        clearTimeout(errorTimer)
+        signal.removeEventListener('abort', onAbort)
+        resolve(resolution)
+        void this.ctx.parallel('cordis/inspect-query-resolved', { requestId }).catch((error: unknown) => {
+          console.error(`[cordis-host-runner] notifying inspect settlement ${requestId} failed:`, error)
+        })
+      }
+      const onAbort = (): void => {
+        settle({ ok: false, reason: 'cancelled', message: `Client inspect query ${providerId}.${methodName} was cancelled` })
+      }
+      const timeout = setTimeout(() => {
+        settle(firstFailure ?? {
+          ok: false,
+          reason: 'provider-error',
+          message: `Client inspect query timed out after ${this.config.inspectQueryTimeoutMs}ms; no valid page response. Check that a connected page has this provider, then retry.`,
+        })
+      }, this.config.inspectQueryTimeoutMs)
+      this.pending.set(requestId, {
+        request, method, settle,
+        fail: (resolution) => {
+          if (firstFailure !== undefined) return
+          firstFailure = resolution
+          // ponytail: bounded grace, not a page census; slower successful pages require a larger configured grace.
+          errorTimer = setTimeout(() => { settle(resolution) }, this.config.inspectQueryErrorGraceMs)
+        },
+      })
+      signal.addEventListener('abort', onAbort, { once: true })
+      if (signal.aborted) onAbort()
+      else {
+        try {
+          this.ctx.emit('cordis/inspect-query', request)
+        } catch (error) {
+          settle({ ok: false, reason: 'provider-error', message: error instanceof Error ? error.message : String(error) })
+        }
+      }
     })
-    const onAbort = (): void => {
-      const pending = this.pending.get(requestId)
-      if (pending === undefined) return
-      this.pending.delete(requestId)
-      pending.settle({ ok: false, reason: 'cancelled', message: `Client inspect query ${providerId}.${methodName} was cancelled` })
-      this.ctx.emit('cordis/inspect-query-resolved', { requestId })
-    }
-    signal.addEventListener('abort', onAbort, { once: true })
-    if (signal.aborted) onAbort()
-    else this.ctx.emit('cordis/inspect-query', request)
-    try {
-      const resolution = await result
-      if (!resolution.ok) throw new Error(`${providerId}.${methodName}: ${resolution.message}`)
-      return resolution.data
-    } finally {
-      signal.removeEventListener('abort', onAbort)
-    }
+    const resolution = await result
+    if (!resolution.ok) throw new Error(`${providerId}.${methodName}: ${resolution.message}`)
+    return resolution.data
   }
 }
 

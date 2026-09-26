@@ -41,6 +41,11 @@ Mount this plugin for the inspection registry or programmatic dynamic-package li
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-cordis-host-runner) is the exhaustive source for every accepted field.
 
+<a id="client-inspect-queries"></a>
+### Client inspect queries
+
+Client queries accept the first schema-valid result for the requesting Agent. The hard deadline is `inspectQueryTimeoutMs` (default `30000`). The first page failure, including invalid output, starts a non-resetting `inspectQueryErrorGraceMs` grace (default `250`); another page can succeed before grace or deadline ends. Otherwise the first failure is returned, preserving diagnostics such as `no catalogued Service named "sidebarRight"`; silence produces a timeout with a reconnect/retry hint. Unknown providers or methods in the Host's mirrored manifest fail immediately. Both settings are integer milliseconds bounded by `2147483647`; the deadline must be positive and grace may be zero. Settlement clears pending state, timers, and the abort listener and broadcasts cancellation to other pages. Tool cancellation and registry disposal settle immediately. These bounds do not apply to Host provider execution or human-approved dynamic runs.
+
 ### What a run does
 
 Programmatic callers use `define`, `run`, `stop`, and `undefine`; the browser panel operates existing definitions. Host-only packages activate in this process. A package with a browser half waits for approval or cancellation, then loads Host before Client. `mode: "run"` starts the current version; `mode: "update"` replaces it. Stop disposes the live effects and retains the definition; undefine also forgets it.

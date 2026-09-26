@@ -41,6 +41,11 @@ kind: "package-reference"
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-cordis-host-runner)是每个受支持字段的穷尽式真源。
 
+<a id="client-inspect-queries"></a>
+### Client 检查查询
+
+Client 查询接受与请求 Agent 匹配的首个通过 schema 校验的结果。硬截止时间由 `inspectQueryTimeoutMs` 指定（默认 `30000`）。首个页面失败（包括无效输出）启动不可重置的 `inspectQueryErrorGraceMs` 宽限期（默认 `250`）；另一页面可在宽限期或截止时间结束前成功作答。否则返回首个失败，保留 `no catalogued Service named "sidebarRight"` 等诊断；没有响应时返回超时及重连后重试提示。Host 镜像清单中未知的 provider 或方法立即失败。两个配置均为不超过 `2147483647` 的整数毫秒数；截止时间必须为正，宽限期可为零。结算清除待处理状态、定时器和 abort 监听器，并向其他页面广播取消通知。工具取消和注册表释放立即结算。这些时间限制不适用于 Host provider 执行或需要人工审批的动态运行。
+
 ### run 会做什么
 
 程序调用方使用 `define`、`run`、`stop` 和 `undefine`；浏览器面板操作已有定义。仅含 Host 的包在本进程激活。带浏览器部分的包等待审批或取消，批准后先加载 Host 再加载 Client。`mode: "run"` 启动当前版本，`mode: "update"` 替换版本。Stop 释放运行中的 effect 并保留定义；undefine 还会移除定义。

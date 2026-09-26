@@ -731,9 +731,17 @@ export interface ToolResultPruneConfig {
 
 ```ts config-catalog
 /** Runner configuration. */
-export interface Config {
+export interface Config extends InspectConfig {
   /** Maximum synchronous VM evaluation time in milliseconds. */
   vmTimeoutMs?: number
+}
+
+/** Bounds for cross-page inspect queries, in milliseconds. */
+export interface InspectConfig {
+  /** Hard deadline for a Client query, including any error grace period. */
+  inspectQueryTimeoutMs?: number
+  /** Non-resetting grace after the first page failure for another page to succeed. */
+  inspectQueryErrorGraceMs?: number
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-cordis-host-runner -->

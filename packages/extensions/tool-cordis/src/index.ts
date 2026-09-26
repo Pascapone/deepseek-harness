@@ -44,9 +44,9 @@ export function apply(ctx: Context): void {
       'Run a read-only query declared by an Inspect Provider. platform, provider, and method must come from '
       + 'cordis_inspect_list, and input must satisfy that method\'s schema. Use this Tool before writing plugin code '
       + 'to read exact Service methods, Event modes, plugin Config schemas, Tool schemas, theme tokens, or live '
-      + 'Slot trees and props. Host queries run locally. A Client query waits for the first valid page response and '
-      + 'remains pending until a page answers or the Tool is cancelled. This Tool cannot invoke business Service '
-      + 'methods or modify the runtime.',
+      + 'Slot trees and props. Host queries run locally. Client queries accept the first valid page response within '
+      + 'a bounded wait; page failures are returned after a short grace for another page to succeed. Queries can '
+      + 'also time out or be cancelled. This Tool cannot invoke business Service methods or modify the runtime.',
     parameters: {
       platform: { type: 'string', required: true, enum: ['host', 'client'], description: 'Runtime platform that owns the Provider.' },
       provider: { type: 'string', required: true, description: 'Exact Provider ID returned by cordis_inspect_list.' },

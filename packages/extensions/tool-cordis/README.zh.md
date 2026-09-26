@@ -68,7 +68,7 @@ Host provider 结合生成的 Service/Event 目录、经 app-boot Config 投影�
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- Client 查询等待页面响应或取消。检查不能调用服务方法、配置插件或执行生成代码。
+- Client 查询使用 Host runner 的[有界等待与错误宽限期](../cordis-host-runner/README.zh.md#client-inspect-queries)；失败和超时返回诊断，不会无限等待。缺少目录条目不代表运行时服务不存在。检查不能调用服务方法、配置插件或执行生成代码。
 - `Config.listConfigs` 只遍历 profile 的 Loader 树。Agent preset 的 `plugins` 列表挂载在独立的 preset 树中，所以只出现在 preset 声明里的插件不会被列出，除非 profile 树也挂载了它。
 
 <a id="dev-note"></a>
