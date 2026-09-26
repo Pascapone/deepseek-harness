@@ -82,9 +82,9 @@ export class BrowserController implements HostObservable<BrowserControllerState>
    * @param viewportId - mounted content container.
    * @returns physical attachment cleanup only.
    */
-  mount(viewportId: string): () => void {
+  mount(viewportId: string, viewport?: HTMLElement): () => void {
     this.publishSaved()
-    return this.page.presentation.mount(viewportId)
+    return this.page.presentation.mount(viewportId, viewport)
   }
 
   /**
@@ -173,6 +173,7 @@ export interface BrowserMountRequest {
   readonly tabId: TabId
   readonly signal: AbortSignal
   readonly viewportId: string
+  readonly viewport?: HTMLElement | undefined
   readonly applicationOrigin: string
   readonly initial: BrowserTabState | undefined
   readonly initialUrl: string | undefined
@@ -241,7 +242,7 @@ export function createBrowserControllers(actions: BoundActions<BrowserStore>, cr
         controllers.set(tabId, held)
         signal.addEventListener('abort', forget, { once: true })
       }
-      const hide = held.controller.mount(request.viewportId)
+      const hide = held.controller.mount(request.viewportId, request.viewport)
       held.controller.start(request.initialUrl)
       return hide
     },

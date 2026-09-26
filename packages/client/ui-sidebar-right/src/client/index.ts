@@ -104,17 +104,21 @@ export function apply(ctx: ClientContext): void {
   const t = ctx.locale.bind(NS)
   const tabs = new SidebarRightTabRegistry(ctx)
   const views = new SidebarSessionViews(ctx.sessions)
-  ctx.effect(() => {
-    const current = ctx.uiSession.adapter.current
-    const sync = (): void => { views.select(current.getSnapshot().key as SessionId | undefined) }
-    const unsubscribe = current.subscribe(sync)
-    sync()
-    return () => { unsubscribe(); views.dispose() }
-  }, 'ui-sidebar-right: retained Session views')
   const { controller, adopt, forget } = createSidebarRightController(
     tabs,
     (address, signal) => { ctx.resources.pin(address, signal) },
   )
+  ctx.effect(() => {
+    const current = ctx.uiSession.adapter.current
+    const sync = (): void => {
+      const selected = current.getSnapshot().key as SessionId | undefined
+      controller.activateWindows(selected)
+      views.select(selected)
+    }
+    const unsubscribe = current.subscribe(sync)
+    sync()
+    return () => { unsubscribe(); views.dispose() }
+  }, 'ui-sidebar-right: retained Session views')
   const disposeRegistry = ctx.reflect.provide('sidebarRightTabs', tabs)
   const disposeService = ctx.reflect.provide('sidebarRight', controller)
   // Registered first, so it tears down last: the faces outlive every seat and
@@ -151,6 +155,8 @@ export function apply(ctx: ClientContext): void {
     }
     const layout: ILayout = ctx.layout
     const injected: Omit<SidebarRightInjected, 'keyedHooks' | 'occurrence' | 'closeTab'> = {
+      popouts: controller.popouts,
+      popout: (tabId, rect) => controller.popout(tabId, rect),
       syncPresentation({ shown, track, fullscreen }) {
         if (shown) layout.openRightbar(track, fullscreen)
         else layout.closeRightbar()

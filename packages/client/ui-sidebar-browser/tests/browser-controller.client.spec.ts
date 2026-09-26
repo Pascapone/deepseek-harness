@@ -81,6 +81,18 @@ describe('BrowserController', () => {
     expect(h.face.keyedHooks.browserState(TAB)).toBeUndefined()
   })
 
+  it('attaches a browser iframe to the satellite document rather than the opener', () => {
+    const h = harness()
+    const satellite = document.implementation.createHTMLDocument('Satellite')
+    const viewport = satellite.createElement('div')
+    satellite.body.append(viewport)
+    const signal = lifetime().signal
+    h.face.mount({ tabId: TAB, signal, viewportId: 'satellite-viewport', viewport,
+      applicationOrigin: APP, initial: undefined, initialUrl: undefined, openTab: vi.fn() })
+    h.face.loadUrl(TAB, 'https://saved.example/')
+    expect(viewport.querySelector('iframe')?.ownerDocument).toBe(satellite)
+  })
+
   it('refresh restores a saved page and ignores cancellation from a retired physical mount', () => {
     const h = harness()
     h.store.actions.replace(TAB, browserAddressCheckpoint({ kind: 'https', url: 'https://saved.example/', title: 'Saved' }, 1))

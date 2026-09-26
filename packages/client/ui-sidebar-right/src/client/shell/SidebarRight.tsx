@@ -27,7 +27,7 @@
  * signal, actions — is read through the slot-owned useTabInfo hook. The Tab
  * domain follows each session's store commits, including sessions off screen.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react'
 import type { CSSProperties, ReactNode, RefObject } from 'react'
 import { IconPanelLeftOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
@@ -107,6 +107,8 @@ export interface SidebarRightInjected {
   }
   /** Read a committed record's lifetime; never creates an occurrence. */
   readonly occurrence: (tab: Pick<TabRecord, 'id'>) => TabOccurrence
+  readonly popouts: { subscribe: (listener: () => void) => () => void; getSnapshot: () => ReadonlyMap<string, HTMLElement | undefined> }
+  readonly popout: (tabId: TabId, rect?: FloatRect) => boolean
 }
 
 /** The column seat's props: session scope, so the session arrives as a standard prop. */
@@ -134,6 +136,8 @@ interface PanelProps {
   readonly autoFullscreen: boolean
   readonly active: boolean
   readonly retainTab: RightbarSeatProps['retainTab']
+  readonly windows: ReadonlyMap<string, HTMLElement | undefined>
+  readonly popout: SidebarRightInjected['popout']
   /** Receives the kit's room-rule readings for the service's `split`. */
   readonly reportRoom: (fits: ReadonlyMap<PaneId, HalvesFit>) => void
 }
@@ -150,7 +154,7 @@ function guideIn(layout: LayoutState, paneId: PaneId): TabId | undefined {
  * @param openTab - the navigation face's `openTab`, which the strip's add control asks for a guide through.
  * @returns the intents the kit reports gestures to.
  */
-export function intentsFor(sessionId: SessionId, actions: Store['actions'], openTab: PanelProps['openTab'], closeTab?: PanelProps['closeTab']): DockIntents {
+export function intentsFor(sessionId: SessionId, actions: Store['actions'], openTab: PanelProps['openTab'], closeTab?: PanelProps['closeTab'], popout?: PanelProps['popout']): DockIntents {
   return {
     focusTab: (tabId) => { actions.focusTab(sessionId, tabId) },
     focusPane: (paneId) => { actions.focusPane(sessionId, paneId) },
@@ -162,7 +166,9 @@ export function intentsFor(sessionId: SessionId, actions: Store['actions'], open
     addTab: (paneId) => { openTab(GUIDE_KIND, { paneId, revealIfOpened: false }) },
     closeTab: closeTab ?? ((tabId) => { actions.closeTab(sessionId, tabId) }),
     duplicateTab: (tabId) => { actions.duplicateTab(sessionId, tabId) },
-    floatTab: (tabId, rect?: FloatRect) => { actions.floatTab(sessionId, tabId, rect) },
+    floatTab: (tabId, rect?: FloatRect) => {
+      if (!popout?.(tabId, rect)) actions.floatTab(sessionId, tabId, rect)
+    },
     unfloatPane: (paneId) => { actions.unfloatPane(sessionId, paneId) },
     placeTab: (tabId, toPaneId, index) => { actions.placeTab(sessionId, tabId, toPaneId, index) },
     dropTab: (tabId, paneId, zone) => { actions.dropTab(sessionId, tabId, paneId, zone) },
@@ -173,7 +179,7 @@ export function intentsFor(sessionId: SessionId, actions: Store['actions'], open
 }
 
 /** One tab's slot dispatch: which seat, and what to render when no type registered. */
-interface TabSlotProps extends Pick<PanelProps, 'renderSlot' | 'occurrence' | 'useTabTypes' | 'useTabNavigation' | 'useStore' | 'fullscreen' | 'active' | 'retainTab'> {
+interface TabSlotProps extends Pick<PanelProps, 'renderSlot' | 'occurrence' | 'useTabTypes' | 'useTabNavigation' | 'useStore' | 'fullscreen' | 'active' | 'retainTab' | 'windows' | 'sessionId'> {
   readonly tab: TabRecord
   readonly seat: 'sidebar.right.pane.tab' | 'sidebar.right.pane.tab.title'
   readonly fallback: ReactNode
@@ -183,22 +189,24 @@ interface TabSlotProps extends Pick<PanelProps, 'renderSlot' | 'occurrence' | 'u
  * Dispatch one tab's body or title with stable framework hooks and record lifetime.
  */
 function TabSlot({
-  renderSlot, occurrence, useTabTypes, useTabNavigation, useStore, fullscreen, active, retainTab, tab, seat, fallback,
+  renderSlot, occurrence, useTabTypes, useTabNavigation, useStore, fullscreen, active, retainTab, windows, sessionId, tab, seat, fallback,
 }: TabSlotProps): ReactNode {
   const { signal, tabActions } = occurrence(tab)
   const definition = useTabTypes(types => types.find(definition => definition.kind === tab.kind))
-  const retained = seat === 'sidebar.right.pane.tab' && definition?.keepMounted === true
+  const key = `${sessionId}:${tab.id}`
+  const inWindow = windows.get(key) !== undefined
+  const retained = seat === 'sidebar.right.pane.tab' && (definition?.keepMounted === true || windows.has(key))
   useLayoutEffect(() => retained ? retainTab(tab.id, signal) : undefined, [retained, retainTab, tab.id, signal])
   const hookContext = useMemo((): TabHookContext => ({
     tabId: tab.id,
     title: seat === 'sidebar.right.pane.tab.title',
     fullscreen,
-    active,
+    active: active || inWindow,
     signal,
     actions: tabActions,
     useStore,
     useTabNavigation,
-  }), [tab.id, seat, fullscreen, active, signal, tabActions, useStore, useTabNavigation])
+  }), [tab.id, seat, fullscreen, active, inWindow, signal, tabActions, useStore, useTabNavigation])
   return renderSlot(seat, {}, { entryKey: definition?.id ?? tab.kind, fallback, hookContext })
 }
 
@@ -308,12 +316,13 @@ function SidebarPanel(panel: PanelProps & { width: number; panelRef: RefObject<H
           minPaneFraction={0.2}
           canAddTab={paneId => guideIn(surface.layout, paneId) === undefined}
           canCloseTab={tabId => canCloseTab(surface, tabId)}
-          intents={intentsFor(sessionId, actions, openTab, panel.closeTab)}
+          intents={intentsFor(sessionId, actions, openTab, panel.closeTab, panel.popout)}
           labels={dockLabels(t)}
           renderTab={bodiesFor(panel)}
           renderTabTitle={titlesFor(panel)}
-          active={panel.active}
-          keepMounted={tab => types.find(type => type.kind === tab.kind)?.keepMounted === true}
+          active={panel.active || [...panel.windows].some(([key, target]) => target !== undefined && key.startsWith(`${sessionId}:`))}
+          keepMounted={tab => types.find(type => type.kind === tab.kind)?.keepMounted === true || panel.windows.has(`${sessionId}:${tab.id}`)}
+          popoutTarget={tabId => panel.windows.get(`${sessionId}:${tabId}`)}
           renderTabMenuItems={(tab, dismiss) =>
             renderSlot('sidebar.right.tab.menu.item', { tab, dismiss })}
           chrome={<PanelChrome sessionId={sessionId} fullscreen={fullscreen} autoFullscreen={autoFullscreen} actions={actions} t={t} />}
@@ -332,8 +341,9 @@ function SidebarPanel(panel: PanelProps & { width: number; panelRef: RefObject<H
  */
 export function RightbarSeat({
   sessionId, width, viewportWidth, canShow, useStore, actions, t, renderSlot, syncPresentation, bindService, openTab, closeTab,
-  useTabTypes, useTabNavigation, occurrence, retainTab, active,
+  useTabTypes, useTabNavigation, occurrence, retainTab, active, popouts, popout,
 }: RightbarSeatProps): ReactNode {
+  const windows = useSyncExternalStore(popouts.subscribe, popouts.getSnapshot)
   // One store instance per session, so this map holds this session's surface.
   // The binding published below serves the public face's commands on the
   // mounted session; a tab's own actions route through the controller's
@@ -433,7 +443,7 @@ export function RightbarSeat({
   if (surface === undefined) return null
   const panel: PanelProps = {
     sessionId, actions, t, renderSlot, surface, openTab, closeTab, useTabTypes, useTabNavigation, useStore, occurrence,
-    fullscreen, autoFullscreen, reportRoom, active, retainTab,
+    fullscreen, autoFullscreen, reportRoom, active, retainTab, windows, popout,
   }
   return <SidebarPanel {...panel} width={width} panelRef={panelRef} />
 }

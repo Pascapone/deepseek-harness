@@ -32,7 +32,7 @@
  */
 import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
 import { createSnapshotStore, type ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
-import type { FloatRect, PaneId, TabId, TabRecord } from '@deepseek-ai/dsh-client-ui-dockkit'
+import type { FloatRect, LayoutState, PaneId, TabId, TabRecord } from '@deepseek-ai/dsh-client-ui-dockkit'
 import { activeDockPaneId, canSplit, findContentTab, dockPaneIds, findTabPane, getPane } from '@deepseek-ai/dsh-client-ui-dockkit'
 import type { BoundActions } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -83,7 +83,11 @@ export function createSidebarRightController(tabs: SidebarRightTabRegistry, pin:
       const sync = (): void => {
         const surface = store.getSnapshot().bySession[sessionId]
         inventory.update(sessionId, Object.values(surface?.layout.tabs ?? {}))
-        if (surface !== undefined) controller.tabDomain.sync(sessionId, surface.layout)
+        if (surface !== undefined) {
+          controller.tabDomain.sync(sessionId, surface.layout)
+          controller.reconcileWindows(sessionId, surface.layout)
+          controller.resumeWindows(sessionId)
+        }
       }
       const adoption: Adoption = { store, unsubscribe: store.subscribe(sync) }
       adopted.set(sessionId, adoption)
@@ -223,7 +227,14 @@ export interface ISidebarRight {
    * @param paneId - the floating pane; one that is missing or docked is left alone.
    */
   dock(paneId: PaneId): void
+  /** Open one tab in a satellite browser window, leaving its layout owned by this page. */
+  popout(tabId: TabId, rect?: FloatRect): boolean
+  /** Install the window creator; no popup behavior exists without an explicit Web plugin. */
+  registerWindowOpener(open: (tab: TabRecord, bounds?: FloatRect) => Window | null): () => void
 }
+
+type Satellite = { window: Window; target: HTMLElement; tabId: TabId; paneId: PaneId; sessionId: SessionId; stop: () => void }
+type ParkedSatellite = { tabId: TabId; paneId: PaneId; sessionId: SessionId; bounds: FloatRect }
 
 /** Cross-plugin right-Sidebar face (ctx.sidebarRight). */
 export class SidebarRightController implements ISidebarRight {
@@ -234,6 +245,12 @@ export class SidebarRightController implements ISidebarRight {
   readonly mounted: ObservableSnapshot<SessionId | undefined> = this.mountedSession
   private binding: SidebarRightBinding | undefined
   private readonly closeHandlers = new Map<string, SidebarRightCloseHandler>()
+  private windowOpener: ((tab: TabRecord, bounds?: FloatRect) => Window | null) | undefined
+  private readonly windows = new Map<string, Satellite>()
+  private readonly parked = new Map<string, ParkedSatellite>()
+  private activeSession: SessionId | undefined
+  private resumeSession: SessionId | undefined
+  readonly popouts = createSnapshotStore<ReadonlyMap<string, HTMLElement | undefined>>(new Map())
 
   /**
    * Register resource cleanup before explicit removal. Failure preserves the tab.
@@ -521,6 +538,179 @@ export class SidebarRightController implements ISidebarRight {
     const node = this.mountedSurface()?.layout.nodes[paneId]
     if (node === undefined || node.kind !== 'pane' || node.host !== 'float') return
     actions.unfloatPane(sessionId, paneId)
+  }
+
+  registerWindowOpener(open: (tab: TabRecord, bounds?: FloatRect) => Window | null): () => void {
+    if (this.windowOpener !== undefined) throw new Error('sidebarRight: window opener already registered')
+    this.windowOpener = open
+    this.resumeSession = this.activeSession
+    if (this.activeSession !== undefined) this.resumeWindows(this.activeSession)
+    const closeAll = (): void => {
+      for (const key of [...this.windows.keys()]) this.releaseWindow(key, true, true)
+    }
+    window.addEventListener('pagehide', closeAll)
+    return () => {
+      if (this.windowOpener !== open) return
+      this.windowOpener = undefined
+      window.removeEventListener('pagehide', closeAll)
+      closeAll()
+    }
+  }
+
+  /** Close inactive session windows without docking their tabs; reopen on selection. */
+  activateWindows(sessionId: SessionId | undefined): void {
+    if (this.activeSession === sessionId) return
+    for (const [key, opened] of [...this.windows]) {
+      if (opened.window.closed) { this.closedWindow(opened); continue }
+      const { screenX, screenY, outerWidth, outerHeight } = opened.window
+      this.parked.set(key, { sessionId: opened.sessionId, tabId: opened.tabId, paneId: opened.paneId,
+        bounds: { x: Number.isFinite(screenX) ? screenX : 0, y: Number.isFinite(screenY) ? screenY : 0,
+          width: outerWidth > 0 ? outerWidth : 900, height: outerHeight > 0 ? outerHeight : 700 } })
+      this.releaseWindow(key)
+    }
+    this.activeSession = sessionId
+    this.resumeSession = sessionId
+    if (sessionId !== undefined) this.resumeWindows(sessionId)
+  }
+
+  /** Retry only once per selection; browsers may refuse automatic popups. */
+  resumeWindows(sessionId: SessionId): void {
+    if (this.resumeSession !== sessionId || this.windowOpener === undefined) return
+    const layout = this.adopted.get(sessionId)?.store.getSnapshot().bySession[sessionId]?.layout
+    if (layout === undefined) return
+    this.resumeSession = undefined
+    for (const [key, parked] of [...this.parked]) {
+      if (parked.sessionId !== sessionId) continue
+      const tab = layout.tabs[parked.tabId]
+      if (tab === undefined) { this.parked.delete(key); this.publishWindows(); continue }
+      try {
+        const popup = this.windowOpener(tab, parked.bounds)
+        if (popup !== null && this.attachWindow(sessionId, tab.id, parked.paneId, popup)) {
+          continue
+        }
+      } catch (error) {
+        console.warn('sidebarRight: detached window could not be restored', parked.tabId, error)
+        continue
+      }
+      console.warn('sidebarRight: browser blocked restoring a detached tab window', parked.tabId)
+    }
+  }
+
+  /** A satellite renders the original React tab: it never owns a second layout writer. */
+  popout(tabId: TabId, rect?: FloatRect): boolean {
+    const { sessionId, actions } = this.require()
+    const layout = this.mountedSurface()?.layout
+    const tab = layout?.tabs[tabId]
+    const open = this.windowOpener
+    if (layout === undefined || tab === undefined || open === undefined) return false
+    const key = `${sessionId}:${tabId}`
+    if (this.windows.has(key)) { this.windows.get(key)?.window.focus(); return true }
+    const popup = open(tab, this.parked.get(key)?.bounds)
+    if (popup === null) return false
+    try {
+      if (findTabPane(layout, tabId).host === 'dock') actions.floatTab(sessionId, tabId, rect)
+      const updated = this.adopted.get(sessionId)?.store.getSnapshot().bySession[sessionId]?.layout
+      const pane = updated === undefined ? undefined : findTabPane(updated, tabId)
+      if (pane?.host !== 'float' || !this.attachWindow(sessionId, tabId, pane.id, popup)) {
+        popup.close()
+        return false
+      }
+      return true
+    } catch (error) {
+      popup.close()
+      throw error
+    }
+  }
+
+  private attachWindow(sessionId: SessionId, tabId: TabId, paneId: PaneId, popup: Window): boolean {
+    let target: HTMLElement
+    try { target = popup.document.body }
+    catch { popup.close(); return false }
+    if (target === null) { popup.close(); return false }
+    const opened: Satellite = { window: popup, target, sessionId, tabId, paneId, stop: () => {} }
+    const onClose = (): void => { this.closedWindow(opened) }
+    popup.addEventListener('pagehide', onClose)
+    const interval = window.setInterval(() => { if (popup.closed) onClose() }, 1000)
+    opened.stop = () => { popup.removeEventListener('pagehide', onClose); window.clearInterval(interval) }
+    const key = `${sessionId}:${tabId}`
+    this.windows.set(key, opened)
+    this.parked.delete(key)
+    this.publishWindows()
+    return true
+  }
+
+  /** Native window closure is a tab close, unlike explicit docking or session-switch parking. */
+  private closedWindow(opened: Satellite): void {
+    const key = `${opened.sessionId}:${opened.tabId}`
+    if (this.windows.get(key) !== opened) return
+    this.releaseWindow(key, false)
+    try { this.closeIn(opened.sessionId, opened.tabId) }
+    catch (error) { console.error('Sidebar tab close failed:', error) }
+  }
+
+  /** Follow a floating pane through tab replacement; release it when the pane docks or closes. */
+  reconcileWindows(sessionId: SessionId, layout: LayoutState): void {
+    for (const [key, opened] of [...this.windows]) {
+      if (opened.sessionId !== sessionId) continue
+      const pane = layout.nodes[opened.paneId]
+      const tabId = pane?.kind === 'pane' && pane.host === 'float' ? pane.tabs[0] : undefined
+      const tab = tabId === undefined ? undefined : layout.tabs[tabId]
+      if (tabId === undefined || tab === undefined) { this.releaseWindow(key); continue }
+      if (tabId !== opened.tabId) {
+        this.windows.delete(key)
+        opened.tabId = tabId
+        this.windows.set(`${sessionId}:${tabId}`, opened)
+        try { opened.window.document.title = `${tab.title} — DSH` } catch { /* window closed concurrently */ }
+        this.publishWindows()
+      }
+    }
+    let changed = false
+    for (const [key, parked] of [...this.parked]) {
+      if (parked.sessionId !== sessionId) continue
+      const pane = layout.nodes[parked.paneId]
+      const tabId = pane?.kind === 'pane' && pane.host === 'float' ? pane.tabs[0] : undefined
+      if (tabId === undefined || layout.tabs[tabId] === undefined) {
+        this.parked.delete(key)
+        changed = true
+        continue
+      }
+      if (tabId !== parked.tabId) {
+        this.parked.delete(key)
+        this.parked.set(`${sessionId}:${tabId}`, { ...parked, tabId })
+        changed = true
+      }
+    }
+    if (changed) this.publishWindows()
+  }
+
+  private publishWindows(): void {
+    const targets = new Map<string, HTMLElement | undefined>([...this.parked.keys()].map(key => [key, undefined]))
+    for (const [key, opened] of this.windows) targets.set(key, opened.target)
+    this.popouts.set(targets)
+  }
+
+  private releaseWindow(key: string, close = true, immediately = false): void {
+    const opened = this.windows.get(key)
+    if (opened === undefined) return
+    this.windows.delete(key)
+    opened.stop()
+    this.publishWindows()
+    if (!close || opened.window.closed) return
+    const content = opened.target.querySelector('[data-dockkit-content]')
+    if (immediately || content === null) { opened.window.close(); return }
+    const observer = new MutationObserver(() => {
+      if (opened.target.contains(content)) return
+      observer.disconnect()
+      window.removeEventListener('pagehide', finish)
+      if (!opened.window.closed) opened.window.close()
+    })
+    const finish = (): void => {
+      observer.disconnect()
+      if (!opened.window.closed) opened.window.close()
+    }
+    // Closing before React moves its mount would destroy the tab's live DOM.
+    observer.observe(opened.target, { childList: true, subtree: true })
+    window.addEventListener('pagehide', finish, { once: true })
   }
 
   /**

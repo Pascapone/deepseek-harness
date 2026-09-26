@@ -4,6 +4,7 @@ import { cloneElement, createContext, useCallback, useContext, useEffect, useRef
 import type { FocusEventHandler, MouseEventHandler, MutableRefObject, ReactElement, Ref } from 'react'
 import { createPortal } from 'react-dom'
 import css from './Tooltip.module.css'
+import { usePortalDocument } from './PortalDocument.tsx'
 
 /** Bubble placement relative to the anchor. */
 export type TooltipSide = 'right' | 'bottom' | 'top'
@@ -62,6 +63,8 @@ if (typeof window !== 'undefined') {
  * interaction (a closing menu refocusing its trigger) never raises it.
  */
 export function Tooltip({ label, side = 'right', align = 'center', delayMs = 0, gap = 8, disabled = false, portal = false, maxWidth, children }: { label: TooltipLabel; side?: TooltipSide; align?: 'center' | 'end'; delayMs?: number; gap?: number; disabled?: boolean; portal?: boolean; maxWidth?: number; children: ReactElement<AnchorProps> }) {
+  const portalDocument = usePortalDocument()
+  const portalWindow = portalDocument.defaultView ?? window
   const anchor = useRef<HTMLElement | null>(null)
   // React 18 keeps the element's ref outside props; forward it so wrapping an
   // anchor in Tooltip never silently severs the owner's ref.
@@ -109,8 +112,8 @@ export function Tooltip({ label, side = 'right', align = 'center', delayMs = 0, 
       if (size === undefined) return
       const { inlineSize: width, blockSize: height } = size
       const offset = side === 'right' ? 0 : align === 'end' ? width : width / 2
-      const left = Math.max(edgeMargin, Math.min(pos.x - offset, window.innerWidth - edgeMargin - width))
-      const fitsBelow = pos.bottom + gap + height <= window.innerHeight - edgeMargin
+      const left = Math.max(edgeMargin, Math.min(pos.x - offset, portalWindow.innerWidth - edgeMargin - width))
+      const fitsBelow = pos.bottom + gap + height <= portalWindow.innerHeight - edgeMargin
       const fitsAbove = pos.top - gap - height >= edgeMargin
       if (placement === 'bottom' && !fitsBelow && fitsAbove) placement = 'top'
       else if (placement === 'top' && !fitsAbove && fitsBelow) placement = 'bottom'
@@ -125,12 +128,12 @@ export function Tooltip({ label, side = 'right', align = 'center', delayMs = 0, 
       fit()
     })
     observer.observe(el, { box: 'border-box' })
-    window.addEventListener('resize', fit)
+    portalWindow.addEventListener('resize', fit)
     return () => {
       observer.disconnect()
-      window.removeEventListener('resize', fit)
+      portalWindow.removeEventListener('resize', fit)
     }
-  }, [align, gap, pos, side, suppressed, visible])
+  }, [align, gap, pos, side, suppressed, visible, portalWindow])
   useEffect(() => {
     announce(visible)
     return () => { announce(false) }
@@ -212,7 +215,7 @@ export function Tooltip({ label, side = 'right', align = 'center', delayMs = 0, 
         onFocus: (e) => { children.props.onFocus?.(e); if (pointerModality) return; triggers.current.focus = true; cancelShow(); show() },
         onBlur: (e) => { children.props.onBlur?.(e); triggers.current.focus = false; hide() },
       })}
-      {portal ? (content !== false && createPortal(content, document.body)) : content}
+      {portal ? (content !== false && createPortal(content, portalDocument.body)) : content}
     </TooltipSuppression.Provider>
   )
 }

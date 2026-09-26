@@ -21,14 +21,15 @@ export function useDismissOnOutsidePointer(
 ): void {
   useEffect(() => {
     if (!open) return
+    const doc = root.current?.ownerDocument ?? document
     const closeOutside = (event: PointerEvent): void => {
-      if (event.target instanceof Node
-        && root.current?.contains(event.target) !== true
-        && portal?.current?.contains(event.target) !== true) {
+      if (event.target !== null && 'nodeType' in event.target
+        && root.current?.contains(event.target as Node) !== true
+        && portal?.current?.contains(event.target as Node) !== true) {
         setOpen(false)
       }
     }
-    document.addEventListener('pointerdown', closeOutside)
-    return () => { document.removeEventListener('pointerdown', closeOutside) }
+    doc.addEventListener('pointerdown', closeOutside)
+    return () => { doc.removeEventListener('pointerdown', closeOutside) }
   }, [root, open, setOpen, portal])
 }

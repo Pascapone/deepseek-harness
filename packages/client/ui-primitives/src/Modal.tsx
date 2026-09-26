@@ -3,6 +3,7 @@ import type { KeyboardEventHandler, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import { IconCloseOutlineRegular } from './icons/index.tsx'
+import { usePortalDocument } from './PortalDocument.tsx'
 import css from './Modal.module.css'
 
 interface ModalBaseProps {
@@ -41,14 +42,15 @@ type ModalProps = ModalBaseProps & (
 export function Modal({
   open, onClose, title, closeLabel, description, children, footer, className, contentClassName, onKeyDownCapture, headless = false,
 }: ModalProps) {
+  const portalDocument = usePortalDocument()
   useEffect(() => {
     if (!open) return
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
     }
-    document.addEventListener('keydown', onKeyDown)
-    return () => { document.removeEventListener('keydown', onKeyDown) }
-  }, [open, onClose])
+    portalDocument.addEventListener('keydown', onKeyDown)
+    return () => { portalDocument.removeEventListener('keydown', onKeyDown) }
+  }, [open, onClose, portalDocument])
 
   if (!open) return null
 
@@ -82,5 +84,5 @@ export function Modal({
           )}
       </div>
     </div>
-  ), document.body)
+  ), portalDocument.body)
 }

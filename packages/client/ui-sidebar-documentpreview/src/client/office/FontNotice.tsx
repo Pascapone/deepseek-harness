@@ -3,7 +3,7 @@ import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-import { Button, IconCloseOutlineRegular, IconWarningTriangleOutlineRegular, Tooltip, useAnchoredPosition, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconCloseOutlineRegular, IconWarningTriangleOutlineRegular, Tooltip, useAnchoredPosition, useDismissOnOutsidePointer, usePortalDocument } from '@deepseek-ai/dsh-client-ui-primitives'
 import common from '../TextPreview.module.css'
 import css from './FontNotice.module.css'
 
@@ -18,6 +18,7 @@ export type FontNoticeProps = PropsLocale<'sidebarOffice'> & {
  * @returns a warning button and its anchored details, or nothing when fonts are available.
  */
 export function FontNotice({ fonts, t }: FontNoticeProps): ReactNode {
+  const portalDocument = usePortalDocument()
   const [expanded, setExpanded] = useState(false)
   const open = fonts.length > 0 && expanded
   const anchor = useRef<HTMLSpanElement>(null)
@@ -51,8 +52,9 @@ export function FontNotice({ fonts, t }: FontNoticeProps): ReactNode {
       style={{ ...position, visibility: position === null ? 'hidden' : undefined }}
       onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeDetails() } }}
       onBlur={(event) => {
-        if (event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget)
-          && !anchor.current?.contains(event.relatedTarget)) setExpanded(false)
+        if (event.relatedTarget !== null && 'nodeType' in event.relatedTarget
+          && !event.currentTarget.contains(event.relatedTarget as Node)
+          && !anchor.current?.contains(event.relatedTarget as Node)) setExpanded(false)
       }}>
       <div className={css.panelHeader}>
         <h3 id={`${id}-title`}>{t('missingFontsTitle')}</h3>
@@ -61,6 +63,6 @@ export function FontNotice({ fonts, t }: FontNoticeProps): ReactNode {
       <p id={`${id}-description`} className={css.description}>{t('missingFontsDescription')}</p>
       <p className={css.count}>{t('missingFontsCount', { count: fonts.length })}</p>
       <ul className={css.fonts}>{fonts.map(font => <li key={font}>{font}</li>)}</ul>
-    </div>, document.body)}
+    </div>, portalDocument.body)}
   </>
 }

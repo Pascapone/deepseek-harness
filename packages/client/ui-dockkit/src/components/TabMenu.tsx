@@ -43,7 +43,7 @@ function placeMenu(anchor: HTMLElement, menu: HTMLElement): CSSProperties {
   // Below the control, aligned to its left edge; flipped to its right edge when
   // that would run off the viewport, as it does for the last tab in a column
   // against the window's right side.
-  const left = rect.left + width + MENU_GAP > window.innerWidth
+  const left = rect.left + width + MENU_GAP > (anchor.ownerDocument.defaultView ?? window).innerWidth
     ? Math.max(MENU_GAP, rect.right - width)
     : rect.left
   return { top: rect.bottom + MENU_GAP, left }
@@ -67,13 +67,14 @@ export function TabMenu({ labels, anchor, onClose, onDismiss, extras }: TabMenuP
     // A press anywhere but inside the menu dismisses it; one with no element
     // target (dispatched to the window itself) counts as outside.
     const onPointerDown = (event: PointerEvent): void => {
-      if (event.target instanceof Node && menu.contains(event.target)) return
+      if (event.target instanceof (anchor.ownerDocument.defaultView ?? window).Node && menu.contains(event.target as Node)) return
       onDismiss()
     }
     // Capture phase: a press on a tab chip starts a drag on its own handler,
     // so the menu must be gone before that handler runs.
-    window.addEventListener('pointerdown', onPointerDown, true)
-    return () => { window.removeEventListener('pointerdown', onPointerDown, true) }
+    const view = anchor.ownerDocument.defaultView ?? window
+    view.addEventListener('pointerdown', onPointerDown, true)
+    return () => { view.removeEventListener('pointerdown', onPointerDown, true) }
   }, [onDismiss, hasItems])
 
   if (!hasItems) return null
@@ -102,6 +103,6 @@ export function TabMenu({ labels, anchor, onClose, onDismiss, extras }: TabMenuP
           a reader looks for it in the same place every time. */}
       {extras}
     </div>,
-    document.body,
+    anchor.ownerDocument.body,
   )
 }

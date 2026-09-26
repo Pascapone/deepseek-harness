@@ -45,13 +45,14 @@ export function followPointer(element: HTMLElement, pointerId: number, followers
     if (element.dataset.dockkitPointer === String(pointerId)) delete element.dataset.dockkitPointer
   }, { once: true })
   const own = (event: PointerEvent): boolean => event.pointerId === pointerId
-  window.addEventListener('pointermove', (event) => { if (own(event)) followers.move(event) }, { signal })
-  window.addEventListener('pointerup', (event) => {
+  const view = element.ownerDocument.defaultView ?? window
+  view.addEventListener('pointermove', (event) => { if (own(event)) followers.move(event) }, { signal })
+  view.addEventListener('pointerup', (event) => {
     if (!own(event)) return
     controller.abort()
     followers.up(event)
   }, { signal })
-  window.addEventListener('pointercancel', (event) => {
+  view.addEventListener('pointercancel', (event) => {
     if (!own(event)) return
     controller.abort()
     followers.cancel()

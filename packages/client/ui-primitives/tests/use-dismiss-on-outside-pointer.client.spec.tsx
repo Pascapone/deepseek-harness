@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /** The outside-pointer dismissal primitive as observable popover behavior. */
-import { cleanup, fireEvent, render } from '@testing-library/react'
+import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -29,6 +29,18 @@ describe('useDismissOnOutsidePointer', () => {
     expect(view.queryByTestId('surface')).not.toBeNull()
     fireEvent.pointerDown(document.body)
     expect(view.queryByTestId('surface')).toBeNull()
+  })
+
+  it('listens to a satellite root document, not the opener', () => {
+    const satellite = document.implementation.createHTMLDocument('Satellite')
+    const container = satellite.createElement('div')
+    satellite.body.append(container)
+    render(<Popover portaled={false} />, { container })
+    expect(satellite.querySelector('[data-testid="surface"]')).not.toBeNull()
+    fireEvent.pointerDown(document.body)
+    expect(satellite.querySelector('[data-testid="surface"]')).not.toBeNull()
+    act(() => { satellite.body.dispatchEvent(new Event('pointerdown', { bubbles: true })) })
+    expect(satellite.querySelector('[data-testid="surface"]')).toBeNull()
   })
 
   it('counts the portaled surface as inside while still closing outside it', () => {
