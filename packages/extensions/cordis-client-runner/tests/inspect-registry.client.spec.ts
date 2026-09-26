@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { CordisInspectQueryRequest } from '@deepseek-ai/dsh-api-remotes/client'
+import type { CordisInspectQueryRequest, CordisInspectRequestId, SessionId } from '@deepseek-ai/dsh-api-remotes/client'
 import { ClientCordisInspectRegistry } from '../src/client/inspect-registry.ts'
 import { Context } from '@deepseek-ai/cordis'
 import { clientInspectProviders } from '../src/client/providers.ts'
 
 const request = {
-  requestId: 'inspect-missing', agentId: 'inspect-owner', provider: 'Service', method: 'listService',
-  input: { service: 'sidebarRight' },
-} as CordisInspectQueryRequest
+  requestId: 'inspect-missing' as CordisInspectRequestId, agentId: 'inspect-owner' as SessionId,
+  provider: 'Service', method: 'listService', input: { service: 'sidebarRight' },
+} satisfies CordisInspectQueryRequest
 
 describe('Client inspect failure transport', () => {
   it('sends a missing static service as provider-error, without claiming the runtime service is absent', async () => {
