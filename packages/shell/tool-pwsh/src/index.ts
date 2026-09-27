@@ -286,10 +286,11 @@ export function apply(ctx: Context, config: Config = {}): void {
         label: args.command,
         ...exec.agent ? { owner: exec.agent.id } : {},
         output: processSources(() => proc),
-        run: () => {
+        run: (job) => {
           const hooks = processJob(
             async (signal) => {
               proc = await ctx.shell.execute({ ...spec, signal })
+              if (proc.processRoot !== undefined) job.setProcessRoot?.(proc.processRoot)
               return proc
             },
             started => processOutcome(started, escalationModes),

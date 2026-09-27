@@ -25,7 +25,7 @@ English | [中文](README.zh.md)
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount this executor when a composition needs Bash command execution on POSIX without confinement. It registers as `ctx.shell`, and the model-facing `bash` tool works over it immediately: an agent calls the tool, and the command runs as a fresh `bash -c` process with the budgets below.
+Mount this executor when a composition needs Bash command execution on POSIX without confinement. It registers as `ctx.shell`, and the model-facing `bash` tool works over it immediately: an agent calls the tool, and the command runs as a fresh `bash -c` process with the budgets below. If the local subprocess provider supplies an exact Windows launcher identity, the execution handle passes it through for job observers.
 
 ### Minimal configuration
 

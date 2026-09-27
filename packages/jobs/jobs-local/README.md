@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-jobs-local` runs background jobs inside the harness process while the agent continues. The owning agent can read, wait on, list, and cancel its jobs; mounting `dsh-tool-jobs` also delivers completion notices in-session. Configurable concurrency and output-retention limits bound resource use. Producers can supply output for periodic reading or append it directly; users can observe retained output without consuming the agent's unread output. Jobs end when their owner or the harness shuts down.
+`dsh-jobs-local` runs background jobs inside the harness process while the agent continues. The owning agent can read, wait on, list, and cancel its jobs; mounting `dsh-tool-jobs` also delivers completion notices in-session. Configurable concurrency and output-retention limits bound resource use. Producers can supply output for periodic reading or append it directly; users can observe retained output without consuming the agent's unread output. Jobs end when their owner or the harness shuts down. Optional exact Windows launcher identities published by shell producers appear in live job projections and disappear at settlement.
 
 ## Table of Contents
 

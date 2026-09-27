@@ -38,7 +38,7 @@ One provider registers `ctx.subprocess` per composition; load it beside the cons
 
 ### Starting a managed process
 
-The request is fully explicit: the program and arguments, the working directory, one stdio disposition per stream, a termination grace, an optional abort signal, and optional environment overrides. Target and managed-range identities remain provider-private. `done` resolves with the direct command's exit facts (`exitCode` and `signal`) and rejects for spawn or provider failures; collected output stays readable after exit.
+The request is fully explicit: the program and arguments, the working directory, one stdio disposition per stream, a termination grace, an optional abort signal, and optional environment overrides. Target identity remains provider-private; a local Windows provider may expose its managed launcher as `processRoot: { pid, started }` (exact UTC creation ticks), which observers must match to a live OS process before following descendants. `done` resolves with the direct command's exit facts (`exitCode` and `signal`) and rejects for spawn or provider failures; collected output stays readable after exit.
 
 ```text
 const executable = await ctx.subprocess.resolveExecutable('bash')

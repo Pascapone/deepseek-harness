@@ -25,7 +25,7 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-当组合需要在 POSIX 上执行 Bash 命令且不需要隔离时，挂载此执行器。它注册为 `ctx.shell`，面向模型的 `bash` 工具会立即基于它工作：agent（智能体）调用工具，命令即以全新 `bash -c` 进程按下面的预算运行。
+当组合需要在 POSIX 上执行 Bash 命令且不需要隔离时，挂载此执行器。它注册为 `ctx.shell`，面向模型的 `bash` 工具会立即基于它工作：agent（智能体）调用工具，命令即以全新 `bash -c` 进程按下面的预算运行。如果本地子进程提供方给出准确的 Windows 启动器标识，执行句柄会将其透传给任务观察者。
 
 ### 最小配置
 

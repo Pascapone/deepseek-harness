@@ -320,6 +320,28 @@ describe('LocalJobRegistry.start', () => {
 })
 
 describe('LocalJobRegistry reads and settlement', () => {
+  it('publishes an exact live process root without retaining it after settlement', async () => {
+    const ctx = await harness()
+    const p = producer()
+    const seen = collect(ctx)
+    const id = ctx.jobs.start(p.spec)
+    const root = { pid: 1234, started: '639000000000000000' }
+    p.job().setProcessRoot?.(root)
+    expect(ctx.jobs.get(id).processRoot).toEqual(root)
+    expect(seen.map(event => event.type)).toEqual(['registered', 'process'])
+    root.pid = 5678
+    expect(ctx.jobs.get(id).processRoot?.pid).toBe(1234)
+    p.job().setProcessRoot?.({ pid: 0, started: root.started })
+    p.job().setProcessRoot?.({ pid: 5678, started: root.started })
+    expect(ctx.jobs.get(id).processRoot?.pid).toBe(1234)
+    expect(seen.map(event => event.type)).toEqual(['registered', 'process'])
+    p.settle({ status: 'completed' })
+    await tick()
+    expect(ctx.jobs.get(id).processRoot).toBeUndefined()
+    p.job().setProcessRoot?.({ pid: 2, started: root.started })
+    expect(ctx.jobs.get(id).processRoot).toBeUndefined()
+  })
+
   it('read consumes the ring from the model cursor and advances it; readAt never moves it', async () => {
     const ctx = await harness()
     const p = producer()

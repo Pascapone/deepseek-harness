@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -81,6 +81,22 @@ function directSpawnFailure(argv: readonly string[], cwd = scratch): Promise<Spa
 const windowsNative = process.platform === 'win32' && probeWindowsJob()
 
 describe.skipIf(!windowsNative)('Windows Job native containment', () => {
+  it('exposes the owned launcher with the exact Windows creation identity', async () => {
+    const request = spec([process.execPath, '-e', 'setInterval(() => {}, 1000)'])
+    const handle = bindManagedProcess(request, launchWindowsJob(request, targetEnvironment(request)))
+    const done = handle.done.catch(() => {})
+    try {
+      const root = handle.processRoot
+      expect(root?.pid).toBeGreaterThan(0)
+      const started = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+        `(Get-Process -Id ${root?.pid}).StartTime.ToUniversalTime().Ticks.ToString()`], { encoding: 'utf8' }).trim()
+      expect(root?.started).toBe(started)
+    } finally {
+      handle.terminate()
+      await Promise.all([done, handle.waitForExit()])
+    }
+  })
+
   it('keeps ordinary descendants free of visible console windows', async () => {
     const fixture = fileURLToPath(new URL('../../win32-process/tests/fixtures/console-state.ts', import.meta.url))
     const script = `

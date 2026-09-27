@@ -99,6 +99,11 @@ export interface JobHandle {
    * @param line - the new progress line.
    */
   updateProgress(line: string): void
+  /**
+   * Optionally publish the owned Windows launcher once; invalid or late identities
+   * are ignored. Consumers must verify its creation time and descendant chain.
+   */
+  setProcessRoot?(root: { pid: number; started: string }): void
 }
 
 /** Hooks through which the runtime controls and observes producer work. */
@@ -199,8 +204,8 @@ export type JobSettleCause = 'producer' | 'kill' | 'teardown'
  */
 export type JobEvent =
   | {
-    /** Registration commit, progress line change, stopping transition, or removal from the visible set. */
-    readonly type: 'registered' | 'progress' | 'stopping' | 'removed'
+    /** Registration, process-root publication, progress, stopping, or removal commit. */
+    readonly type: 'registered' | 'process' | 'progress' | 'stopping' | 'removed'
     readonly job: JobView
   }
   | {

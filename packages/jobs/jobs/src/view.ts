@@ -83,6 +83,8 @@ export interface JobView {
   readonly progress?: string
   /** Terminal reason (`exit code: 3`); a recorded kill reason is merged in. */
   readonly detail?: string
+  /** Windows launcher owned by a live job, when supplied by its producer. `started` is exact UTC DateTime ticks, not a PID-only guess. */
+  readonly processRoot?: { readonly pid: number; readonly started: string }
   /** Epoch ms when the job was registered. */
   readonly startedAt: number
   /** Epoch ms when the job settled; absent while live. */

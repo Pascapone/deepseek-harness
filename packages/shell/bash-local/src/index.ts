@@ -300,6 +300,7 @@ export class LocalBashExecutor extends ShellExecutor {
     let stderrOffset = 0
     let resultPromise: Promise<ShellRunResult> | undefined
     const proc: ShellExecution = {
+      ...running?.processRoot !== undefined ? { processRoot: running.processRoot } : {},
       status: 'running',
       exitCode: null,
       signal: null,

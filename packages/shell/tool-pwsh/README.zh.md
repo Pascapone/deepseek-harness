@@ -25,7 +25,7 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-在 agent 需要运行 PowerShell 命令的任何组合中加载本插件——通常是 `ctx.shell` 由 PowerShell 执行器支撑的 Windows 组合。一旦挂载执行器提供方与 `dsh-shell-env` 注册表，它就注册 `pwsh` 工具。
+在 agent 需要运行 PowerShell 命令的任何组合中加载本插件——通常是 `ctx.shell` 由 PowerShell 执行器支撑的 Windows 组合。一旦挂载执行器提供方与 `dsh-shell-env` 注册表，它就注册 `pwsh` 工具。由 Windows 启动器支撑的任务会向 Host 观察者发布可选的准确进程树根标识，而不会在面向模型的结果中暴露。
 
 ### 何时选择
 

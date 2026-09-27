@@ -336,6 +336,15 @@ function windowsProcessState(bindings: Win32Bindings, pid: number): WindowsProce
   }
 }
 
+/** Read a live Windows PID's exact creation time in .NET UTC ticks; a missing identity cannot establish ownership. */
+export function windowsStartTicks(pid: number): string | undefined {
+  const started = windowsProcessState(win32Bindings(), pid)?.started
+  if (started === undefined) return undefined
+  const [high, low] = started.split(':')
+  if (high === undefined || low === undefined) return undefined
+  return ((BigInt(high) << 32n) + BigInt(low) + 504911232000000000n).toString()
+}
+
 /** The koffi-backed default internals; bindings resolve lazily on first use. */
 function defaultWindowsProcessInternals(): WindowsProcessInspectorInternals {
   return {

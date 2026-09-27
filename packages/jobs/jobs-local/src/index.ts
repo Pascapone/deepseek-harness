@@ -68,6 +68,8 @@ export interface Config {
 interface ProducerState {
   /** Live progress line until settlement clears it. */
   progress: string | undefined
+  /** Optional Windows process-tree root published by the producer. */
+  processRoot: JobView['processRoot']
   /** The committed registry record; undefined exactly during the starter call. */
   job: TrackedJob | undefined
 }
@@ -230,11 +232,12 @@ export class LocalJobRegistry extends JobRegistry {
     this.counters.set(spec.kind, count)
     const id = JobId(`${spec.kind}-${count}`)
     const ring = new OutputRing()
-    const state: ProducerState = { progress: undefined, job: undefined }
+    const state: ProducerState = { progress: undefined, processRoot: undefined, job: undefined }
     const handle: JobHandle = {
       id,
       append: (text, options) => { this.appendRing(state, ring, text, options, 'producer') },
       updateProgress: (line) => { this.updateProgress(state, line) },
+      setProcessRoot: (root) => { this.setProcessRoot(state, root) },
     }
     const hooks = spec.run(handle)
 
@@ -422,6 +425,7 @@ export class LocalJobRegistry extends JobRegistry {
       status: job.status,
       ...job.state.progress !== undefined ? { progress: job.state.progress } : {},
       ...job.detail !== undefined ? { detail: job.detail } : {},
+      ...job.state.processRoot !== undefined ? { processRoot: { ...job.state.processRoot } } : {},
       startedAt: job.startedAt,
       ...job.finishedAt !== undefined ? { finishedAt: job.finishedAt } : {},
       output: {
@@ -567,6 +571,16 @@ export class LocalJobRegistry extends JobRegistry {
     if (job !== undefined) this.emit({ type: 'progress', job: this.view(job) }, job.owner)
   }
 
+  /** Publish a producer's process-tree root only while its job is live. */
+  private setProcessRoot(state: ProducerState, root: { pid: number; started: string }): void {
+    const job = state.job
+    if (job !== undefined && isTerminal(job.status)) return
+    // Optional provenance must never fail a command that has already started.
+    if (!Number.isSafeInteger(root.pid) || root.pid <= 0 || !/^\d{15,20}$/.test(root.started) || state.processRoot !== undefined) return
+    state.processRoot = { ...root }
+    if (job !== undefined) this.emit({ type: 'process', job: this.view(job) }, job.owner)
+  }
+
   /**
    * Record the first terminal outcome, release waiters, then announce the
    * settlement. First-wins preserves a teardown force-failure against late
@@ -589,6 +603,7 @@ export class LocalJobRegistry extends JobRegistry {
       job.detail = outcome.detail
     }
     job.state.progress = undefined
+    job.state.processRoot = undefined
     job.result = outcome.result
     job.finishedAt = Date.now()
     // Settlement ends the stream: trim to the settled cap before any observer

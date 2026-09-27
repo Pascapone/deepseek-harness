@@ -71,6 +71,7 @@ const install: InvariantInstaller = Object.assign((ctx: Context, fail: Invariant
         if (phase !== undefined) fail(`registered announced for job ${id} after earlier events for the same id`)
         if (terminal || job.finishedAt !== undefined) fail(`registered job ${id} must announce a live status without finishedAt`)
         break
+      case 'process':
       case 'progress':
       case 'stopping':
         if (phase === 'settled') fail(`${event.type} announced for job ${id} after its settlement`)
