@@ -54,6 +54,8 @@ const selection = ctx.agentDefaultModel.currentSelection()
 await ctx.agentDefaultModel.saveSelection({ provider, model, reasoningEffort: 'high' })
 ```
 
+预设插件可以通过注入的 `agentDefaultModel` 服务调用 `registerScoped(selection)`。注册属于调用方作用域，由后代作用域继承，并在插件卸载时移除。较近的作用域覆盖祖先；同一作用域中的重复默认值以及没有作用域的注册都会失败。`currentSelection(scope)` 读取指定作用域的回退选择而不修改 profile；省略参数时使用调用上下文的作用域。消费者仍须优先采用显式选择或会话中已记录的选择。
+
 没有配置编辑器时，`saveSelection()` 不执行写入。此服务不验证目录成员资格；发起模型请求的消费者负责可用性诊断。
 
 -----
@@ -75,7 +77,7 @@ await ctx.agentDefaultModel.saveSelection({ provider, model, reasoningEffort: 'h
 | 文件 | 职责 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | 即时默认选择与 profile 写入 |
-| — | 不发布 invariant 配套模块，因为 Config 引用是唯一由此包维护的值。 |
+| — | 不发布 invariant 配套模块，因为 Config 引用和作用域注册没有独立缓存的选择。 |
 
 ### 行为说明
 

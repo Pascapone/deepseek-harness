@@ -104,6 +104,14 @@ export class SubagentContinuationManager {
   async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart> {
     const request = spec.request
     const parent = request.parent
+    if (request.agentPreset !== undefined) {
+      if (typeof request.agentPreset !== 'string' || !request.agentPreset.trim()) {
+        throw new SubagentError('child preset id must be nonempty text', 'PRESET_UNAVAILABLE')
+      }
+      if (this.ctx.subagents.getProvider(spec.provider)?.capabilities.agentPreset !== true) {
+        throw new SubagentError(`provider "${spec.provider}" cannot bind a child preset`, 'UNSUPPORTED_PRESET')
+      }
+    }
     this.activations.assertAdmitting(parent)
     const persistence = this.requirePersistence()
     assertSubagentMaxDepth(request.maxDepth)
@@ -164,13 +172,13 @@ export class SubagentContinuationManager {
           parent,
           create: {
             seed,
-            meta: childSessionMeta(parent, childDepth, prepared.seed !== undefined),
+            meta: childSessionMeta(parent, childDepth, prepared.seed !== undefined, request.agentPreset),
             inheritedEventCount,
             delegatedPolicies,
             descriptor,
           },
           agentOptions,
-          composition: { persona: request.persona, toolFilter: request.toolFilter },
+          composition: { persona: request.persona, toolFilter: request.toolFilter, agentPreset: request.agentPreset },
           signal: spec.signal,
         })
         const childHeader = activation.handle.agent.session.header
@@ -444,7 +452,9 @@ export class SubagentContinuationManager {
             ? { reasoningEffort: ReasoningEffortId(descriptor.agentReasoningEffort) }
             : {},
         },
-        composition: { persona: descriptor.persona, toolFilter: descriptor.toolFilter },
+        composition: { persona: descriptor.persona, toolFilter: descriptor.toolFilter,
+          // A seeded fork retains the native live-parent composition on resume.
+          agentPreset: source.header.isSeeded ? undefined : source.header.agentPreset },
         signal: options.signal,
       })
     } catch (error: unknown) {

@@ -2,6 +2,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import { expect, it, onTestFinished, vi } from 'vitest'
 import DefaultModel from '../src/index.ts'
+import { createScope } from '@deepseek-ai/dsh-scope'
 import { liveConfig } from '../../../settings/settings/tests/live-config.ts'
 
 it('reads complete selections from volatile config and clears omitted reasoning effort', async () => {
@@ -15,6 +16,34 @@ it('reads complete selections from volatile config and clears omitted reasoning 
   expect(consumer.currentSelection()).toEqual({ provider: 'p', model: 'm' })
   await consumer.saveSelection({ provider: 'unsaved', model: 'unsaved' })
   expect(consumer.currentSelection()).toEqual({ provider: 'p', model: 'm' })
+})
+
+it('inherits scoped defaults, rejects duplicates, and removes contributions without changing the profile', async () => {
+  const ctx = new Context()
+  onTestFinished(() => ctx.fiber.dispose())
+  await liveConfig(ctx, DefaultModel, { provider: 'global', model: 'original' })
+  const consumer = ctx.inject(['agentDefaultModel'], () => {})
+  await consumer
+  const parentKey = {}, childKey = {}
+  const parent = createScope(consumer.ctx, parentKey)
+  const child = createScope(consumer.ctx, childKey, { parent: parentKey })
+  const selected = { provider: 'preset', model: 'chosen', privateMetadata: 'not a model-selection field' }
+  expect(() => ctx.agentDefaultModel.registerScoped(selected)).toThrow('require a scope')
+  parent.ctx.agentDefaultModel.registerScoped(selected)
+  selected.model = 'mutated'
+  expect(parent.ctx.agentDefaultModel.currentSelection().model).toBe('chosen')
+  expect(ctx.agentDefaultModel.currentSelection(childKey)).toEqual({ provider: 'preset', model: 'chosen' })
+  expect(ctx.agentDefaultModel.currentSelection().model).toBe('original')
+  expect(ctx.agentDefaultModel.currentSelection({}).model).toBe('original')
+  expect(() => parent.ctx.agentDefaultModel.registerScoped(selected)).toThrow('already registered')
+  child.ctx.agentDefaultModel.registerScoped({ provider: 'child', model: 'override' })
+  const detached = ctx.agentDefaultModel.currentSelection(childKey)
+  detached.model = 'mutated'
+  expect(ctx.agentDefaultModel.currentSelection(childKey).model).toBe('override')
+  await child.dispose()
+  expect(ctx.agentDefaultModel.currentSelection(childKey).model).toBe('chosen')
+  await parent.dispose()
+  expect(ctx.agentDefaultModel.currentSelection(childKey).model).toBe('original')
 })
 
 it('persists complete selections through its owning profile entry', async () => {

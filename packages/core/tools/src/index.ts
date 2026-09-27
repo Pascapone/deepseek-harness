@@ -694,20 +694,24 @@ export interface Config {
 }
 
 /**
- * Per-scope filter over global tools. Restrictions intersect and do not affect
- * scoped registrations or the reserved PTC mode transport.
+ * Per-scope filter over inherited tools. Restrictions intersect and preserve
+ * scoped registrations unless `includeOwn` explicitly includes this layer.
+ * The reserved PTC mode transport remains exempt.
  */
 export interface ToolRestriction {
   /** Global tool names that stay visible; everything else is removed. */
   readonly allow?: readonly string[]
   /** Global tool names removed from visibility. */
   readonly deny?: readonly string[]
+  /** Also filter registrations in this exact scope (not descendant-owned tools). */
+  readonly includeOwn?: boolean
 }
 
 /** One restriction compiled at registration for repeated live-global lookup. */
 interface CompiledToolRestriction {
   readonly allow?: ReadonlySet<string>
   readonly deny?: ReadonlySet<string>
+  readonly includeOwn?: boolean
 }
 
 /** One scope's complete registry view, derived in a single layer traversal. */
@@ -754,9 +758,10 @@ class ToolLayer implements ScopeLayer {
       && this.mode === undefined
   }
 
-  /** Whether every compiled restriction in this layer admits a global tool name. */
-  admits(name: string): boolean {
+  /** Whether every applicable restriction in this layer admits a tool name. */
+  admits(name: string, own = false): boolean {
     for (const filter of this.restrictions.values()) {
+      if (own && !filter.includeOwn) continue
       if ((filter.allow !== undefined && !filter.allow.has(name))
         || (filter.deny !== undefined && filter.deny.has(name))) return false
     }
@@ -997,7 +1002,6 @@ export class ToolRuntime extends Service {
         yield ctx.systemPrompt.section(this.sdkSection())
       }
     }.bind(this), 'tools.presentAs()')
-    // oxlint-disable-next-line typescript/no-misused-promises -- synchronous composite teardown
     return dispose
   }
 
@@ -1088,10 +1092,10 @@ export class ToolRuntime extends Service {
   }
 
   /**
-   * Restrict global tools for the calling agent scope. Empty filters, unknown
-   * names, scope-local names, and reserved transport names fail. Restrictions
-   * intersect; scoped registrations remain visible.
-   * @param filter - global-tool mask: `allow` (keep only) and/or `deny` (remove).
+   * Restrict inherited tools for the calling agent scope. `includeOwn` also
+   * filters registrations in that exact scope; omission preserves them. Empty
+   * filters, unknown names, and reserved transport names fail.
+   * @param filter - tool mask: `allow` (keep only) and/or `deny` (remove).
    * @returns the exact disposer that lifts this restriction.
    */
   restrict(filter: ToolRestriction): () => void {
@@ -1104,17 +1108,22 @@ export class ToolRuntime extends Service {
     if (allow === undefined && deny === undefined) {
       throw new Error('tools.restrict({}) is a no-op: pass `allow` and/or `deny` (an empty filter is almost always a materialized-empty-config bug)')
     }
+    if (filter.includeOwn !== undefined && typeof filter.includeOwn !== 'boolean') {
+      throw new Error('tools.restrict() includeOwn must be a boolean')
+    }
     const compiled: CompiledToolRestriction = {
       ...allow !== undefined ? { allow: new Set(allow) } : {},
       ...deny !== undefined ? { deny: new Set(deny) } : {},
+      ...filter.includeOwn ? { includeOwn: true } : {},
     }
     if ([...allow ?? [], ...deny ?? []].includes(RUN_CODE_NAME)) {
       throw new Error(`tools.restrict() cannot name reserved PTC mode presentation transport "${RUN_CODE_NAME}"; restrict end-capability tools instead`)
     }
-    const known = this.view(scope).restrictableNames
+    const known = new Set(this.view(scope).restrictableNames)
+    if (filter.includeOwn) for (const [name] of this.layers.peek(scope)?.tools.entries() ?? []) known.add(name)
     const unknown = [...allow ?? [], ...deny ?? []].filter(name => !known.has(name))
     if (unknown.length > 0) {
-      throw new Error(`tools.restrict() names unknown global tool${unknown.length > 1 ? 's' : ''} ${unknown.map(n => `"${n}"`).join(', ')}; known global tools: ${[...known].sort().join(', ') || '(none)'}`)
+      throw new Error(`tools.restrict() names unknown ${filter.includeOwn ? '' : 'global '}tool${unknown.length > 1 ? 's' : ''} ${unknown.map(n => `"${n}"`).join(', ')}; known ${filter.includeOwn ? '' : 'global '}tools: ${[...known].sort().join(', ') || '(none)'}`)
     }
     return this.layers.effect(
       this.ctx,
@@ -1155,14 +1164,16 @@ export class ToolRuntime extends Service {
 
   /**
    * Resolve every registry fact one scope needs in one layer traversal. The
-   * visible map applies restrictions to the INHERITED surface, then the
-   * scope's own registrations and the reserved presentation transport; the
+   * visible map applies restrictions to the INHERITED surface, then adds
+   * the scope's own registrations (subject only to explicit `includeOwn`)
+   * and the reserved presentation transport; the
    * other sets retain the pre-restriction facts needed by restriction and
    * prompt-order validation.
    *
-   * A restriction filters what a scope inherits — the global layer and every
-   * ancestor layer on its chain — and never what its OWN layer registers.
-   * That exemption is what a per-child capability filter has to keep intact:
+   * By default a restriction filters what a scope inherits — the global layer
+   * and every ancestor — and not what its OWN layer registers. `includeOwn`
+   * opts into filtering only that exact layer too.
+   * The default exemption is what a per-child capability filter keeps intact:
    * the delegation runtime registers a child's structured-output tool into the
    * child's own layer, and a filter naming the capabilities the child may use
    * must not strip the machinery it answers through.
@@ -1199,12 +1210,13 @@ export class ToolRuntime extends Service {
       // mask an inherited name for everything nested inside it.
       if (layers.every(layer => layer.admits(name))) visible.set(name, definition)
     }
-    // The scope's own registrations last, shadowing an inherited name and
-    // outside the filter above.
+    // The scope's own registrations shadow inherited names, except when this
+    // scope explicitly requested an includeOwn mask for them.
     if (own !== undefined) {
       for (const [name, definition] of own.tools.entries()) {
         knownNames.add(name)
-        visible.set(name, definition)
+        visible.delete(name)
+        if (own.admits(name, true)) visible.set(name, definition)
       }
     }
     // Presentation infrastructure is resolved last and outside capability

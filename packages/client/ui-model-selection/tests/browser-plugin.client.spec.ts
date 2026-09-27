@@ -71,12 +71,18 @@ async function bench(locale: 'zh' | 'en' = 'zh') {
   let selected = defaultSelection
   const calls = { models: 0, select: 0 }
   const projections = new Map<SessionId, SnapshotStore<ModelSelectionProjection | undefined>>()
-  // Whether the Host advertises available models for the current route.
+  const presets = new Map<SessionId, SnapshotStore<string | null>>()
+  const presetDefaults = new Map<SessionId, ModelSelection>()
+  // Whether the Host reports an adapter for the current route; the composer
+  // block follows this, never catalog membership.
   let routable = true
   let catalogFailure = false
   let groups = GROUPS
   let selectionFailure: RemoteError<'session/writer-held'> | undefined
   const sessionRemote = {
+    modelDefault: ({ sessionId }: { sessionId: SessionId }) => Promise.resolve({
+      ok: true as const, value: presetDefaults.get(sessionId) ?? defaultSelection,
+    }),
     modelCatalog: () => {
       calls.models += 1
       if (catalogFailure) return Promise.reject(new Error('catalog offline'))
@@ -138,7 +144,12 @@ async function bench(locale: 'zh' | 'en' = 'zh') {
   const scopes = new Map<SessionId, Context>()
   const bindings = new Map<SessionId, {
     sessionId: SessionId
-    session: { sessionId: SessionId; projections: { faceOf: () => SnapshotStore<ModelSelectionProjection | undefined> } }
+    session: {
+      sessionId: SessionId
+      projections: {
+        faceOf: (name: string) => SnapshotStore<ModelSelectionProjection | undefined> | SnapshotStore<string | null>
+      }
+    }
     ctx: Context
   }>()
   const addressed = new Set<SessionId>()
@@ -161,9 +172,11 @@ async function bench(locale: 'zh' | 'en' = 'zh') {
       next: null,
     })
     projections.set(id, projection)
+    const preset = createSnapshotStore<string | null>(null)
+    presets.set(id, preset)
     const binding = {
       sessionId: id,
-      session: { sessionId: id, projections: { faceOf: () => projection } },
+      session: { sessionId: id, projections: { faceOf: (name: string) => name === 'agentPreset' ? preset : projection } },
       ctx: handle.ctx,
     }
     bindings.set(id, binding)
@@ -186,6 +199,10 @@ async function bench(locale: 'zh' | 'en' = 'zh') {
       selectionFailure = new RemoteError('session/writer-held', 'writer held', { sessionId: sid('owned') })
     },
     setHostCurrent: (selection: ModelSelection) => { defaultSelection = selection },
+    setPresetDefault: (id: SessionId, preset: string, selection: ModelSelection) => {
+      presetDefaults.set(id, selection)
+      presets.get(id)?.set(preset)
+    },
     setProjected: (id: SessionId, value: ModelSelectionProjection) => { projections.get(id)?.set(value) },
     address: (id: SessionId) => { addressed.add(id) },
     setGroups: (next: typeof GROUPS) => { groups = next },
@@ -198,6 +215,52 @@ async function bench(locale: 'zh' | 'en' = 'zh') {
 const projection = (id: string) => ({ sessionId: sid(id) })
 
 describe('ui-model-selection dual entry', () => {
+  it('shows scoped defaults after preset changes while explicit selections keep precedence', async () => {
+    const b = await bench('en')
+    const scope = b.mint('scoped')
+    const id = sid('scoped')
+    const directory = b.ctx.modelDirectories.directoryFor(id)
+    await directory.load()
+    const scoped = { provider: 'deepseek-official', model: 'deepseek-v4-pro', reasoningEffort: 'max' }
+    b.setPresetDefault(id, 'specialist', scoped)
+    await vi.waitFor(() => expect(directory.store.getSnapshot().current).toEqual(scoped))
+    const explicit = { provider: 'deepseek-official', model: 'deepseek-v4-flash' }
+    b.setProjected(id, { lastUsed: null, next: explicit })
+    b.setPresetDefault(id, 'another', scoped)
+    expect(directory.store.getSnapshot().current).toEqual(explicit)
+    await scope.fiber.dispose()
+    await b.ctx.fiber.dispose()
+  })
+
+  it('ignores late defaults from an older preset and from a disposed directory', async () => {
+    const b = await bench('en')
+    const scope = b.mint('late-default')
+    const id = sid('late-default')
+    const directory = b.ctx.modelDirectories.directoryFor(id)
+    await directory.load()
+    const pending: Array<(value: Awaited<ReturnType<typeof b.remote.session.modelDefault>>) => void> = []
+    b.remote.session.modelDefault = () => new Promise((resolve) => { pending.push(resolve) })
+    const older = { provider: 'deepseek-official', model: 'old' }
+    const newer = { provider: 'deepseek-official', model: 'new' }
+    b.setPresetDefault(id, 'older', older)
+    await vi.waitFor(() => expect(pending).toHaveLength(1))
+    b.setPresetDefault(id, 'newer', newer)
+    await vi.waitFor(() => expect(pending).toHaveLength(2))
+    pending[1]!({ ok: true, value: newer })
+    await vi.waitFor(() => expect(directory.store.getSnapshot().current).toEqual(newer))
+    pending[0]!({ ok: true, value: older })
+    await Promise.resolve()
+    expect(directory.store.getSnapshot().current).toEqual(newer)
+    b.setPresetDefault(id, 'disposed', older)
+    await vi.waitFor(() => expect(pending).toHaveLength(3))
+    await scope.fiber.dispose()
+    const snapshot = directory.store.getSnapshot()
+    pending[2]!({ ok: true, value: older })
+    await Promise.resolve()
+    expect(directory.store.getSnapshot()).toBe(snapshot)
+    await b.ctx.fiber.dispose()
+  })
+
   it('carries writer contention to the model seat and localizes the command failure', async () => {
     const b = await bench()
     b.mint('owned')
@@ -374,7 +437,7 @@ describe('ui-model-selection dual entry', () => {
     b.mint('s1')
     const face = b.seat().inject!(sid('s1'))
     face.load()
-    expect(face.directory.getSnapshot().current?.model).toBe('deepseek-v4-flash')
+    await vi.waitFor(() => expect(face.directory.getSnapshot().current?.model).toBe('deepseek-v4-flash'))
 
     b.remote.emit('settings/document-updated', ['llm-deepseek', 1])
     b.setProjected(sid('s1'), {

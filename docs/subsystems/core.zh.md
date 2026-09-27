@@ -431,17 +431,26 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 
 ### `ctx.agentDefaultModel` — `AgentDefaultModelConfig`
 
-Owns the default model selection independently of any Host or transport. Each operation reads the owning Config references.
+Owns the default model selection independently of any Host or transport. Scoped registrations take precedence over the live deployment Config references.
 
 ```ts cordis-catalog
 /**
- * Read the current default model selection.
- * @returns a detached provider, model, and optional reasoning selection.
+ * Register one fallback for the calling scope and its descendants without writing the profile.
+ * Duplicate registrations in one scope and unscoped callers fail. Unloading the owner removes it.
+ * @param next - selection whose route availability is validated by the request consumer.
+ * @returns the disposer for this registration.
  */
-currentSelection(): ModelSelection
+registerScoped(next: ModelSelection): () => void
 
 /**
- * Save the complete default model selection. A deployment without a configuration
+ * Read the nearest scoped default, falling back to the live profile selection.
+ * @param scope - target identity; omission uses the calling context's scope.
+ * @returns a detached provider, model, and optional reasoning selection.
+ */
+currentSelection(scope: ScopeKey | undefined = scopeOf(this.ctx)): ModelSelection
+
+/**
+ * Save the complete deployment default selection. A deployment without a configuration
  * editor keeps its composition entry. Saves commit in submission order; a failed
  * save rejects its caller without blocking later saves.
  * @param next - resolved selection accepted by an entry point.
@@ -449,6 +458,8 @@ currentSelection(): ModelSelection
  */
 async saveSelection(next: ModelSelection): Promise<void>
 ```
+
+Types: [ScopeKey](scope.zh.md)
 
 Source: [`packages/core/agent-default-model/src/index.ts`](../../packages/core/agent-default-model/src/index.ts)
 

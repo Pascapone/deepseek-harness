@@ -6,6 +6,8 @@
  */
 
 import { describe, expect, it, vi, onTestFinished } from 'vitest'
+import DefaultModel from '@deepseek-ai/dsh-agent-default-model'
+import { createScope } from '@deepseek-ai/dsh-scope'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { agentEvents } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -157,6 +159,37 @@ function currentSelection(ctx: Context, sessionId: SessionId) {
 }
 
 describe('Web session model selection', () => {
+  it('resolves a later-mounted scoped default without changing global defaults or replacing explicit choices', async () => {
+    const { ctx, agent, sessionId } = await harness()
+    onTestFinished(() => ctx.fiber.dispose())
+    const global = { provider: 'deepseek-official', model: 'deepseek-chat' }
+    await ctx.plugin(DefaultModel, global)
+    const remote = createSessionTestRemote(ctx, { defaultModelSelection: () => global, cwd: '/tmp' })
+    const activate = vi.spyOn(ctx.agents, 'create')
+    const controller = new ApiSessionAgentController(ctx)
+    const reference = controller.selectionFor(agent)
+    expect(reference.current).toEqual(global)
+    const consumer = ctx.inject(['agentDefaultModel'], () => {})
+    await consumer
+    const scope = createScope(consumer.ctx, agent)
+    const preset = { provider: 'deepseek-official', model: 'deepseek-reasoner', reasoningEffort: ReasoningEffortId('max') }
+    scope.ctx.agentDefaultModel.registerScoped(preset)
+    expect(reference.current).toEqual(preset)
+    expect(expectValue(await remote.modelDefault({ sessionId }))).toEqual(preset)
+    expect(expectValue(await remote.modelDefault({ sessionId: 'missing' as SessionId }))).toBeNull()
+    expect((await remote.modelDefault({ sessionId: '' as SessionId })).ok).toBe(false)
+    const cancelled = new AbortController()
+    cancelled.abort()
+    expect((await remote.modelDefault({ sessionId }, cancelled.signal)).ok).toBe(false)
+    expect(activate).not.toHaveBeenCalled()
+    expect(ctx.agentDefaultModel.currentSelection()).toEqual(global)
+    controller.selectForNextRequest(agent, global)
+    expect(reference.current).toEqual(global)
+    await scope.dispose()
+    expect(reference.current).toEqual(global)
+    expect(ctx.agentDefaultModel.currentSelection()).toEqual(global)
+  })
+
   it('validates an ordered image batch before persisting any member', async () => {
     const { ctx, agent, sessionId } = await harness()
     const validateImage = vi.fn((_input: { data: Uint8Array }) => Promise.resolve())

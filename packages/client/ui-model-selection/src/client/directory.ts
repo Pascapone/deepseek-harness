@@ -15,7 +15,7 @@ import type { ModelCatalogDirectory } from './catalog.ts'
 
 /** Directory snapshot both entries render from. */
 export interface ModelDirectoryState {
-  /** Saved selection, retained even when its provider or model leaves the catalog. */
+  /** Effective selection: durable next-request projection, then the Session's scoped default. */
   current: ModelSelection | null
   /** Saved effort caption retained when the selected model is unavailable. */
   retainedEffort?: string
@@ -45,6 +45,11 @@ export class ModelDirectory {
   private disposed = false
   private readonly unsubscribeCatalog: () => void
   private readonly unsubscribeSelection: () => void
+  private readonly unsubscribePreset: (() => void) | undefined
+  private defaultSelection: ModelSelection | null = null
+  private defaultError: string | null = null
+  private defaultAbort: AbortController | undefined
+  private defaultLoad: Promise<void> | undefined
 
   /**
    * @param sessions - the session wire face (captured from the plugin's root connection).
@@ -52,17 +57,21 @@ export class ModelDirectory {
    * @param available - whether this session may use Agent-bound model RPCs.
    * @param catalog - Host-generation catalog shared by every Session.
    * @param projected - durable model selection projected from Session history.
+   * @param preset - current preset projection; changes invalidate the scoped fallback.
    */
   constructor(
-    private readonly sessions: Pick<TypertClientRemote['session'], 'selectModel'>,
+    private readonly sessions: Pick<TypertClientRemote['session'], 'selectModel' | 'modelDefault'>,
     private readonly sessionId: SessionId,
     private readonly available: () => boolean,
     private readonly catalog: ModelCatalogDirectory,
     private readonly projected: ObservableSnapshot<unknown>,
+    preset?: ObservableSnapshot<unknown>,
   ) {
-    this.unsubscribeCatalog = catalog.store.subscribe(() => { this.syncInputs() })
-    this.unsubscribeSelection = projected.subscribe(() => { this.syncInputs() })
-    this.syncInputs()
+    const refresh = (): void => { void this.refreshDefault() }
+    this.unsubscribeCatalog = catalog.store.subscribe(refresh)
+    this.unsubscribeSelection = projected.subscribe(refresh)
+    this.unsubscribePreset = preset?.subscribe(refresh)
+    refresh()
   }
 
   /**
@@ -72,6 +81,7 @@ export class ModelDirectory {
   async load(): Promise<ModelDirectoryState> {
     this.assertAvailable()
     await this.catalog.load()
+    await (this.defaultLoad ?? this.refreshDefault())
     this.syncInputs()
     return this.store.getSnapshot()
   }
@@ -130,6 +140,38 @@ export class ModelDirectory {
     this.disposed = true
     this.unsubscribeSelection()
     this.unsubscribeCatalog()
+    this.unsubscribePreset?.()
+    this.defaultAbort?.abort()
+  }
+
+  private refreshDefault(): Promise<void> {
+    this.defaultAbort?.abort()
+    this.defaultLoad = undefined
+    this.defaultSelection = null
+    this.defaultError = null
+    if (this.disposed || !this.available() || this.catalog.store.getSnapshot().status !== 'ready'
+      || modelSelectionProjection(this.projected.getSnapshot())?.next !== null) {
+      this.syncInputs()
+      return Promise.resolve()
+    }
+    const abort = new AbortController()
+    this.defaultAbort = abort
+    const pending = this.sessions.modelDefault({ sessionId: this.sessionId }, abort.signal).then((result) => {
+      if (this.disposed || abort.signal.aborted) return
+      if (!result.ok) this.defaultError = `${result.error.code}: ${result.error.message}`
+      else if (result.value === null) this.defaultError = 'Session is unavailable'
+      else this.defaultSelection = result.value
+      this.syncInputs()
+    }).catch((error: unknown) => {
+      if (this.disposed || abort.signal.aborted) return
+      this.defaultError = String(error)
+      this.syncInputs()
+    }).finally(() => {
+      if (this.defaultAbort === abort) this.defaultLoad = undefined
+    })
+    this.defaultLoad = pending
+    this.syncInputs()
+    return pending
   }
 
   private assertAvailable(): void {
@@ -142,7 +184,7 @@ export class ModelDirectory {
     if (this.disposed) return
     const catalog = this.catalog.store.getSnapshot()
     const projected = modelSelectionProjection(this.projected.getSnapshot())
-    const intended = projected?.next ?? catalog.value?.default
+    const intended = projected?.next ?? this.defaultSelection ?? catalog.value?.default
     const reasoning = intended === undefined ? undefined : this.catalog.reasoningFor(intended)
     const effort = intended?.reasoningEffort ?? reasoning?.defaultEffort
     const retainedEffort = effort === undefined ? undefined
@@ -160,11 +202,15 @@ export class ModelDirectory {
       })
       return
     }
-    const selection = projected.next ?? catalog.value.default
-    const routable = catalog.value.groups.some(group => group.id === selection.provider
-      && group.models.some(model => model.id === selection.model))
+    if (projected.next === null && this.defaultError !== null) {
+      this.store.set({ current: null, routable: null, groups: catalog.value.groups, failures: catalog.value.failures,
+        pending: this.store.getSnapshot().pending, status: 'error', error: this.defaultError })
+      return
+    }
+    const current = projected.next ?? this.defaultSelection ?? catalog.value.default
+    const routable = catalog.value.routableProviders.includes(current.provider)
     this.store.set({
-      current: selection,
+      current,
       ...retainedEffort === undefined ? {} : { retainedEffort },
       routable,
       groups: catalog.value.groups,

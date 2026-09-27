@@ -134,15 +134,17 @@ export function resolveChildAgentOptions(
  * @param parent - the delegating parent agent.
  * @param childDepth - the resolved delegation depth to persist.
  * @param isSeeded - whether this child inherits a parent-log prefix, including an explicitly empty one.
+ * @param selectedPreset - an explicitly selected child preset instead of the parent's live composition.
  * @returns the `meta` for `ctx.agents.create()`.
  */
 export function childSessionMeta(
   parent: Agent,
   childDepth: number,
   isSeeded: boolean,
+  selectedPreset?: string,
 ): NonNullable<CreateAgentOptions['meta']> {
   const parentHeader = parent.session.header
-  const agentPreset = parent.ctx.get('agentPresets')?.composedPreset(parent.ctx)
+  const agentPreset = selectedPreset ?? parent.ctx.get('agentPresets')?.composedPreset(parent.ctx)
   return {
     ...parentHeader.cwd !== undefined ? { cwd: parentHeader.cwd } : {},
     ...agentPreset === undefined ? {} : { agentPreset },
@@ -196,13 +198,17 @@ export const SUBAGENT_DELEGATION_CONTEXT
  * @param childCtx - the child agent's scoped creation context.
  * @param parent - the delegating parent whose composition the child joins.
  * @param composition - the per-child persona and tool filter to install.
+ * @param composeParent - false after the selected preset was already mounted in setup.
+ * @param continuable - filter own-scope tools too; continuable children do not have a structured-output tool.
  */
 export function applyChildComposition(
   childCtx: Context,
   parent: Agent,
   composition: ChildComposition,
+  composeParent = true,
+  continuable = false,
 ): void {
-  childCtx.get('agentPresets')?.composeFrom(childCtx, parent.ctx)
+  if (composeParent) childCtx.get('agentPresets')?.composeFrom(childCtx, parent.ctx)
   childCtx.systemPrompt.context({
     name: 'subagent:delegation',
     order: childCtx.systemPrompt.getContextOrder('SUBAGENT_DELEGATION'),
@@ -215,7 +221,11 @@ export function applyChildComposition(
       text: composition.persona,
     })
   }
-  if (composition.toolFilter !== undefined) childCtx.tools.restrict(composition.toolFilter)
+  if (composition.toolFilter !== undefined) childCtx.tools.restrict({ ...composition.toolFilter,
+    // Continuable children have no structured-output tool to exempt; a one-shot
+    // allowlist still preserves that native own-scope result mechanism.
+    ...(continuable || composition.toolFilter.allow === undefined ? { includeOwn: true } : {}),
+  })
 }
 
 /** Policy seeded onto a child session's log at the delegation boundary. */
