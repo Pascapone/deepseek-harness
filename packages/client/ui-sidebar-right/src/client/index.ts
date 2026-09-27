@@ -111,6 +111,7 @@ export function apply(ctx: ClientContext): void {
   const { controller, adopt, forget } = createSidebarRightController(
     tabs,
     (address, signal) => { ctx.resources.pin(address, signal) },
+    (sessionId, tabId, pinned) => { views.pin(sessionId, tabId, pinned) },
   )
   ctx.effect(() => {
     const current = ctx.uiSession.adapter.current
@@ -196,6 +197,7 @@ export function apply(ctx: ClientContext): void {
           'sidebar.right.pane.tab': { kind: 'keyed', scope: 'session', inject: { hooks: { tabInfo: tabInfoFactory } } },
           'sidebar.right.pane.tab.title': { kind: 'keyed', scope: 'session', inject: { hooks: { tabInfo: tabInfoFactory } } },
           'sidebar.right.tab.menu.item': { kind: 'list', scope: 'session' },
+          'sidebar.right.tab.title.leading': { kind: 'list', scope: 'session' },
         },
         store,
         inject: (sessionId): SidebarRightInjected => ({

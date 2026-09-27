@@ -68,14 +68,15 @@ interface Adoption {
  * @param pin - resource retention for an occurrence's lifetime.
  * @returns the controller and plugin-owned adoption and scope-removal callbacks.
  */
-export function createSidebarRightController(tabs: SidebarRightTabRegistry, pin: PinResource): {
+export function createSidebarRightController(tabs: SidebarRightTabRegistry, pin: PinResource,
+  retainPinned?: (sessionId: SessionId, tabId: TabId, pinned: boolean) => void): {
   controller: SidebarRightController
   adopt: (sessionId: SessionId, store: SidebarRightSurfaceStore) => () => void
   forget: (sessionId: SessionId) => void
 } {
   const adopted = new Map<SessionId, Adoption>()
   const inventory = new SidebarTabInventory()
-  const controller = new SidebarRightController(tabs, pin, adopted, inventory.source)
+  const controller = new SidebarRightController(tabs, pin, adopted, inventory.source, retainPinned)
   return {
     controller,
     forget: (sessionId) => { inventory.remove(sessionId) },
@@ -197,6 +198,8 @@ export interface ISidebarRight {
    * @param tabId - the tab to close.
    */
   close(tabId: TabId): void
+  /** Close a tab in its own Session, including an inactive detached tab; the sole docked guide remains. */
+  closeIn(sessionId: SessionId, tabId: TabId): void
   /**
    * The active tab of the active pane.
    * @returns the record, or `undefined` when no seat is mounted.
@@ -238,6 +241,10 @@ export interface ISidebarRight {
   popout(tabId: TabId, rect?: FloatRect): boolean
   /** Install the window creator; no popup behavior exists without an explicit Web plugin. */
   registerWindowOpener(open: (tab: TabRecord, bounds?: FloatRect) => Window | null): () => void
+  /** Copy a recorded tab into the mounted Session without removing its source. */
+  copyToMounted(tab: Pick<TabRecord, 'kind' | 'contentId' | 'title'>): TabId
+  /** Keep a detached window and its source Session view alive across selections. */
+  setPinned(sessionId: SessionId, tabId: TabId, pinned: boolean): void
 }
 
 type Satellite = { window: Window; target: HTMLElement; tabId: TabId; paneId: PaneId; sessionId: SessionId; stop: () => void }
@@ -255,6 +262,7 @@ export class SidebarRightController implements ISidebarRight {
   private windowOpener: ((tab: TabRecord, bounds?: FloatRect) => Window | null) | undefined
   private readonly windows = new Map<string, Satellite>()
   private readonly parked = new Map<string, ParkedSatellite>()
+  private readonly pinned = new Set<string>()
   private activeSession: SessionId | undefined
   private resumeSession: SessionId | undefined
   readonly popouts = createSnapshotStore<ReadonlyMap<string, HTMLElement | undefined>>(new Map())
@@ -288,6 +296,7 @@ export class SidebarRightController implements ISidebarRight {
     pin: PinResource,
     private readonly adopted = new Map<SessionId, Adoption>(),
     openTabs: SidebarTabInventory['source'] = new SidebarTabInventory().source,
+    private readonly retainPinned?: (sessionId: SessionId, tabId: TabId, pinned: boolean) => void,
   ) {
     this.openTabs = openTabs
     this.tabDomain = new TabDomain(this, pin)
@@ -376,7 +385,6 @@ export class SidebarRightController implements ISidebarRight {
   /**
    * Close a tab of one session, preserving the sole docked guide; nothing happens
    * for a session whose store was never adopted or whose adoption was released.
-   * Not part of `ISidebarRight`: the Tab domain's path.
    * @param sessionId - the session the tab is in.
    * @param tabId - the tab to close.
    */
@@ -458,6 +466,27 @@ export class SidebarRightController implements ISidebarRight {
       ? undefined : findContentTab(layout, claim.contentId, claim.kind)
     if (replaced === undefined || replaced.id === revealed) { commit(); return }
     this.removeAfterCleanup(sessionId, replaced, commit)
+  }
+
+  /** Copy a tab into the visible Session; the source Session remains untouched. */
+  copyToMounted(tab: Pick<TabRecord, 'kind' | 'contentId' | 'title'>): TabId {
+    const { sessionId, actions } = this.require()
+    let copied: TabId | undefined
+    actions.openContent(sessionId, { ...tab, revealIfOpened: true }, (id) => { copied = id })
+    if (copied === undefined) throw new Error('sidebarRight: copy did not create a tab')
+    this.tabDomain.navigate(sessionId, copied, { address: tab.contentId, params: undefined })
+    return copied
+  }
+
+  /** Keep detached tabs mounted while locked, without changing their Session ownership. */
+  setPinned(sessionId: SessionId, tabId: TabId, pinned: boolean): void {
+    const key = `${sessionId}:${tabId}`
+    if (this.pinned.has(key) === pinned) return
+    if (pinned) this.pinned.add(key)
+    else this.pinned.delete(key)
+    const opened = this.windows.get(key)
+    if (!pinned && opened !== undefined && sessionId !== this.activeSession) this.parkWindow(key, opened)
+    this.retainPinned?.(sessionId, tabId, pinned)
   }
 
   /**
@@ -703,15 +732,20 @@ export class SidebarRightController implements ISidebarRight {
     if (this.activeSession === sessionId) return
     for (const [key, opened] of [...this.windows]) {
       if (opened.window.closed) { this.closedWindow(opened); continue }
-      const { screenX, screenY, outerWidth, outerHeight } = opened.window
-      this.parked.set(key, { sessionId: opened.sessionId, tabId: opened.tabId, paneId: opened.paneId,
-        bounds: { x: Number.isFinite(screenX) ? screenX : 0, y: Number.isFinite(screenY) ? screenY : 0,
-          width: outerWidth > 0 ? outerWidth : 900, height: outerHeight > 0 ? outerHeight : 700 } })
-      this.releaseWindow(key)
+      if (this.pinned.has(key)) continue
+      this.parkWindow(key, opened)
     }
     this.activeSession = sessionId
     this.resumeSession = sessionId
     if (sessionId !== undefined) this.resumeWindows(sessionId)
+  }
+
+  private parkWindow(key: string, opened: Satellite): void {
+    const { screenX, screenY, outerWidth, outerHeight } = opened.window
+    this.parked.set(key, { sessionId: opened.sessionId, tabId: opened.tabId, paneId: opened.paneId,
+      bounds: { x: Number.isFinite(screenX) ? screenX : 0, y: Number.isFinite(screenY) ? screenY : 0,
+        width: outerWidth > 0 ? outerWidth : 900, height: outerHeight > 0 ? outerHeight : 700 } })
+    this.releaseWindow(key)
   }
 
   /** Retry only once per selection; browsers may refuse automatic popups. */

@@ -55,7 +55,7 @@ import { closeWithPaneFocus, openWithPaneFocus } from './close-focus.ts'
 type Store = PropsStore<ReturnType<typeof createSidebarRightStore>>
 
 /** The child seats this component renders. */
-type Children = PropsRenderSlots<'sidebar.right.pane.tab' | 'sidebar.right.pane.tab.title' | 'sidebar.right.tab.menu.item'>
+type Children = PropsRenderSlots<'sidebar.right.pane.tab' | 'sidebar.right.pane.tab.title' | 'sidebar.right.tab.menu.item' | 'sidebar.right.tab.title.leading'>
 
 /** What the panel reports to the frame: drawn or not, and whether it wants a track. */
 export interface SidebarRightPresentation {
@@ -226,7 +226,9 @@ function TabSlot({
   }), [tab.id, seat, fullscreen, active, inWindow, signal, tabActions, useStore, useTabNavigation, shortcuts])
   const content = renderSlot(seat, {}, { entryKey: definition?.id ?? tab.kind, fallback, hookContext })
   return seat === 'sidebar.right.pane.tab.title'
-    ? <span className={css.tabTitle} data-sidebar-right-tab={tab.id} data-sidebar-right-occurrence={id}>{content}</span>
+    ? <span className={css.tabTitle} data-sidebar-right-tab={tab.id} data-sidebar-right-occurrence={id}>
+      {renderSlot('sidebar.right.tab.title.leading', { tab })}{content}
+    </span>
     : <div className={css.tabBody} data-sidebar-right-tab={tab.id} data-sidebar-right-occurrence={id}>{content}</div>
 }
 

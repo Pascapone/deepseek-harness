@@ -881,6 +881,47 @@ it('parks detached tabs on session switch and restores their saved screen bounds
   }
 })
 
+it('copies an existing tab into another Session without moving its source', async () => {
+  const h = await mountSeat()
+  const original = h.open('copied.txt')
+  await act(async () => { await h.runtime.sessions.add({ id: OTHER }) })
+  act(() => { h.selectSession(OTHER) })
+  let copy: TabId | undefined
+  act(() => { copy = h.controller.copyToMounted(original) })
+  expect(Object.values(h.layout().tabs).some(tab => tab.id === copy && tab.contentId === original.contentId)).toBe(true)
+  act(() => { h.selectSession(SESSION) })
+  expect(h.layout().tabs[original.id]).toEqual(original)
+})
+
+it('keeps a locked satellite and its original tab alive through a session switch', async () => {
+  const h = await mountSeat()
+  const tab = h.open('locked.txt')
+  const target = document.createElement('div')
+  document.body.append(target)
+  const popup = Object.assign(new EventTarget(), {
+    document: { body: target }, closed: false,
+    screenX: 20, screenY: 20, outerWidth: 800, outerHeight: 600,
+    focus() {}, close() { this.closed = true },
+  }) as unknown as Window
+  const release = h.controller.registerWindowOpener(() => popup)
+  try {
+    act(() => { h.controller.popout(tab.id); h.controller.setPinned(SESSION, tab.id, true) })
+    await act(async () => { await h.runtime.sessions.add({ id: OTHER }) })
+    act(() => { h.selectSession(OTHER) })
+    expect(popup.closed).toBe(false)
+    expect(target.querySelector(`[data-tab-body="${tab.id}"]`)).not.toBeNull()
+    expect(h.controller.popouts.getSnapshot().get(`${SESSION}:${tab.id}`)).toBe(target)
+    act(() => { h.controller.setPinned(SESSION, tab.id, false) })
+    await waitFor(() => { expect(popup.closed).toBe(true) })
+    expect(h.controller.popouts.getSnapshot().has(`${SESSION}:${tab.id}`)).toBe(true)
+    act(() => { h.selectSession(SESSION) })
+    expect(h.layout().tabs[tab.id]).toBeDefined()
+  } finally {
+    release()
+    target.remove()
+  }
+})
+
 it('switches several satellites in both directions without mixing sessions', async () => {
   const h = await mountSeat()
   const first = h.open('first.txt')
