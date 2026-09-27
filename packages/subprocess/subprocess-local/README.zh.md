@@ -40,7 +40,7 @@ kind: "package-reference"
 
 绝对可执行文件路径会被验证；裸名称根据清理后的 PATH 并以平台感知的可执行文件扩展名（Windows 上为 `.COM`/`.EXE`/`.BAT`/`.CMD`）解析。含分隔符的相对路径会被拒绝——请提供绝对路径或裸 PATH 名称——相对 PATH 条目从宿主进程 cwd 解析。
 
-Windows 普通子进程通过 `windowsHide` 启动私有 Job runner，并为原生目标请求隐藏初始窗口。标准流和 Job 归属不依赖窗口可见性；显式创建自身窗口的命令不在此保证范围内。
+Windows 普通子进程通过 `windowsHide` 启动私有 Job runner，并为原生目标请求隐藏初始窗口。其句柄以可选的 `processRoot` 暴露 runner 的准确 PID 与创建时间，供观察者在进程存活时独立核对 OS 祖先关系；runner 不是目标进程。标准流和 Job 归属不依赖窗口可见性；显式创建自身窗口的命令不在此保证范围内。
 
 ### 收集输出
 

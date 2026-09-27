@@ -167,6 +167,11 @@ export interface SubprocessCollectedOutputs {
  * and observation limits.
  */
 export interface SubprocessHandle {
+  /**
+   * Optional Windows process-tree anchor: the managed launcher's PID and exact
+   * UTC creation ticks, not the target command PID.
+   */
+  readonly processRoot?: { readonly pid: number; readonly started: string }
   /** The child's stdin, present iff spawned with `stdin: 'pipe'`. */
   readonly stdin: Writable | undefined
   /** The child's raw stdout, present iff spawned with `stdout: 'pipe'`. */

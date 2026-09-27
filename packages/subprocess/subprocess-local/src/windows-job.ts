@@ -11,6 +11,7 @@ import {
   probeCurrentTokenJobSupport,
 } from '@deepseek-ai/dsh-win32-process'
 import type { BoundProcessOwner, ManagedProcessLaunch } from './managed-owner.ts'
+import { windowsStartTicks } from './windows-inspector.ts'
 import {
   type SerializedRunnerError,
   type WindowsRunnerResult,
@@ -146,6 +147,15 @@ export function launchWindowsJob(
     if (ignoredStdinFd !== undefined) closeSync(ignoredStdinFd)
   }
   const targetStdin = child.stdio[4] as Writable | null
+  let processRoot: ManagedProcessLaunch['processRoot']
+  if (child.pid !== undefined) {
+    try {
+      const started = windowsStartTicks(child.pid)
+      if (started !== undefined) processRoot = { pid: child.pid, started }
+    } catch {
+      // Optional observation must not turn a successful process launch into a failed job.
+    }
+  }
 
   const direct = Promise.withResolvers<SubprocessOutcome>()
   const rangeExit = Promise.withResolvers<void>()
@@ -237,6 +247,7 @@ export function launchWindowsJob(
   })
 
   return {
+    ...processRoot !== undefined ? { processRoot } : {},
     stdin: spec.stdio.stdin === 'ignore' ? null : targetStdin,
     stdout: child.stdio[5] as Readable | null,
     stderr: child.stdio[6] as Readable | null,

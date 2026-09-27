@@ -38,7 +38,7 @@ kind: "package-reference"
 
 ### 启动受管进程
 
-请求完全明确：程序与参数、工作目录、每条流一种 stdio 处置方式、终止宽限期、可选的中止信号与可选的环境覆盖。目标与受管范围标识保留在提供方内部。`done` 以直接命令的退出事实（`exitCode` 与 `signal`）resolve，并在 spawn 或提供方失败时 reject；收集输出在退出后仍可读取。
+请求完全明确：程序与参数、工作目录、每条流一种 stdio 处置方式、终止宽限期、可选的中止信号与可选的环境覆盖。目标标识保留在提供方内部；本地 Windows 提供方可以将受管启动器暴露为 `processRoot: { pid, started }`（准确的 UTC 创建时间 ticks），观察者必须先与存活的 OS 进程核对，才能沿父进程关系追踪后代。`done` 以直接命令的退出事实（`exitCode` 与 `signal`）resolve，并在 spawn 或提供方失败时 reject；收集输出在退出后仍可读取。
 
 ```text
 const executable = await ctx.subprocess.resolveExecutable('bash')

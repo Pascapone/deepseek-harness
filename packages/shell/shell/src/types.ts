@@ -186,6 +186,8 @@ export interface ShellProcessRead {
  * awaits {@link done}; an executor-only reload leaves them running.
  */
 export interface ShellProcess {
+  /** Optional exact Windows launcher identity for OS process-tree attribution; not the shell command's PID. */
+  readonly processRoot?: { readonly pid: number; readonly started: string }
   /** Process lifecycle state (settled exactly once). */
   status: ShellProcessStatus
   /** Exit code once finished (null = killed by signal / still running). */

@@ -115,6 +115,21 @@ async function until<T>(read: () => T | undefined, timeoutMs = 5_000): Promise<T
 }
 
 describe('background pwsh output', () => {
+  it('projects the shell launcher identity into a live job only', async () => {
+    const { ctx, pwsh } = await setup()
+    const scripted = observableProcess()
+    Object.defineProperty(scripted.proc, 'processRoot', { value: { pid: 123, started: '639000000000000000' } })
+    pwsh.backgroundHandler = () => scripted.proc
+    const started = await call(ctx, { command: 'Start-Server', description: 'test command', run_in_background: true })
+    expect(started.isError).toBe(false)
+    const id = ctx.jobs.list()[0]!.id
+    await until(() => ctx.jobs.get(id).processRoot?.pid)
+    expect(ctx.jobs.get(id).processRoot).toEqual(scripted.proc.processRoot)
+    scripted.finish()
+    await until(() => ctx.jobs.get(id).status === 'completed' ? true : undefined)
+    expect(ctx.jobs.get(id).processRoot).toBeUndefined()
+  })
+
   it('streams observed channels into the job ring and settles with the mapped outcome', async () => {
     const { ctx, pwsh } = await setup()
     const stdout = { text: '' }

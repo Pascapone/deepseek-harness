@@ -22,6 +22,8 @@ export interface BoundProcessOwner {
 
 /** Platform launch facts consumed by the common stdio and result lifecycle. */
 export interface ManagedProcessLaunch {
+  /** Optional exact identity of the launcher whose OS process tree contains the managed target. */
+  processRoot?: { pid: number; started: string }
   stdin: Writable | null
   stdout: Readable | null
   stderr: Readable | null

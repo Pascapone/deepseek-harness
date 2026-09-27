@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-pwsh-local` 是 PowerShell 执行器：每条命令都以全新的非交互 `pwsh -Command` 进程运行，不加载 profile 文件，因此调用之间不会残留任何 shell 状态。它逐调用镜像 `dsh-bash-local` 的语义，并额外负责 PowerShell 层事项：可执行文件解析、UTF-8 输出固定与面向模型的终端环境。命令以 harness 进程自身的权限运行——本执行器不做任何隔离；需要沙箱能力时请组合 `dsh-pwsh-sandbox`。挂载后，面向模型的 `pwsh` 工具会与它对接。
+`dsh-pwsh-local` 是 PowerShell 执行器：每条命令都以全新的非交互 `pwsh -Command` 进程运行，不加载 profile 文件，因此调用之间不会残留任何 shell 状态。它逐调用镜像 `dsh-bash-local` 的语义，并额外负责 PowerShell 层事项：可执行文件解析、UTF-8 输出固定与面向模型的终端环境。命令以 harness 进程自身的权限运行——本执行器不做任何隔离；需要沙箱能力时请组合 `dsh-pwsh-sandbox`。挂载后，面向模型的 `pwsh` 工具会与它对接。在 Windows 上，执行句柄会为任务观察者透传本地子进程提供方可选的准确启动器标识。
 
 ## 目录
 
