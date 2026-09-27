@@ -12,11 +12,11 @@ Preset directories duplicate Cordis configuration ownership. Separate discovery,
 
 `dsh-agent-preset-registry` owns selection and runtime revisions; `dsh-agent-preset` declares an identity, display metadata and child plugin list in ordinary Cordis YAML. Definitions activate eagerly. Activation failures remain in the roster and reject new bindings without preventing the application from starting.
 
-The registry owns each revision's scope and Loader tree. Agents link their own scopes to the selected revision, and children inherit their parent's exact revision. Updates retire the former revision; Agents and temporary cold readers retain references until disposal. The final release disposes a retired tree. Host registries and the Agent loop remain shared; preset service providers and consumers require an isolated realm.
+The registry owns each revision's scope and Loader tree. Agents link their own scopes to the selected revision. Forks inherit their parent's revision; preset-bound V2 fresh starts bind the selected child's revision. Updates retire the former revision; Agents and temporary cold readers retain references until disposal. The final release disposes a retired tree. Host registries and the Agent loop remain shared; preset service providers and consumers require an isolated realm.
 
 The Web editor and `agent_preset` tool accept only child plugin YAML. Saving writes the active profile's user patch, preserving display metadata and unrelated configuration. Revision checks and profile locking prevent overwriting concurrent saves; validation rejects a higher-priority override that would defeat the edit. Persistence and activation outcomes are reported separately. Tool writes require approval or full access because configuration executes in the Host.
 
-Session data continues to record the preset identity. Restart resolves that identity against current configuration and rejects a missing definition. Old executable revisions are process-local, not serialized. The saved user default and blank-session selection remain; `selectedDefault` is what an unnamed new session resolves, and the Client's Developer tools preference decides only whether the choice is shown.
+Session data continues to record the preset identity. Restart resolves that identity against current configuration and rejects a missing definition. Old executable revisions are process-local, not serialized. The saved user default and blank-session selection remain; `selectedDefault` is what an unnamed new session resolves. The Client's Developer tools preference gates the picker, while `pickerHidden` removes individual entries only from its choices, not from resolution, running Agents, child composition or session labels.
 
 ## Alternatives considered
 

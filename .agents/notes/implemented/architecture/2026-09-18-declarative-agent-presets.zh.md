@@ -12,11 +12,11 @@ Preset 目录重复承担 Cordis 配置的所有权。独立的发现、元数�
 
 `dsh-agent-preset-registry` 负责选择与运行时代际；`dsh-agent-preset` 在普通 Cordis YAML 中声明标识、显示元数据和子插件列表。定义提前激活。激活失败保留在列表中，并拒绝新绑定，但不阻止应用启动。
 
-注册表拥有各代际的 scope 与 Loader 树。Agent 将自身 scope 链接到选定代际，子 Agent 继承父方的确切代际。更新使旧代际退役；Agent 和临时历史读取者保留引用，直至释放。最后一个引用释放后，退役树被销毁。Host 注册表和 Agent loop 保持共享；preset 的服务提供方与消费者需要处于隔离 realm 中。
+注册表拥有各代际的 scope 与 Loader 树。Agent 将自身 scope 链接到选定代际。fork 继承父 Agent 的代际；绑定指定 preset 的 V2 新建子 Agent 则使用所选 preset 的代际。更新使旧代际退役；Agent 和临时历史读取者保留引用，直至释放。最后一个引用释放后，退役树被销毁。Host 注册表和 Agent loop 保持共享；preset 的服务提供方与消费者需要处于隔离 realm 中。
 
 Web 编辑器与 `agent_preset` 工具只接受子插件 YAML。保存写入当前 profile 的用户补丁，保留显示元数据和无关配置。版本检查和 profile 锁防止覆盖并发保存；验证拒绝会使编辑失效的更高优先级覆盖。持久化与激活结果分别报告。配置在 Host 中执行，因此工具写入需要批准或完全访问权限。
 
-会话数据继续记录 preset 标识。重启时根据当前配置解析该标识，定义缺失则拒绝恢复。旧的可执行代际仅保留在进程内，不会序列化。保存的用户默认值与空白会话选择保持不变：未指定 preset 的新会话解析 `selectedDefault`，客户端的开发者工具偏好只决定是否展示这项选择。
+会话数据继续记录 preset 标识。重启时根据当前配置解析该标识，定义缺失则拒绝恢复。旧的可执行代际仅保留在进程内，不会序列化。保存的用户默认值与空白会话选择保持不变：未指定 preset 的新会话解析 `selectedDefault`。客户端的开发者工具偏好控制选择器是否显示；`pickerHidden` 仅从选择器选项中隐藏指定项，不影响 preset 解析、运行中的 Agent、子 Agent 组装或会话标签。
 
 ## Alternatives considered
 

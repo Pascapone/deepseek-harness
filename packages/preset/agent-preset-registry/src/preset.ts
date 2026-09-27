@@ -15,4 +15,6 @@ export interface Config {
   default: string
   /** User-selected default; edited through Settings. */
   selectedDefault: Volatile<string | undefined>
+  /** Preset ids omitted only from new-session picker choices. */
+  pickerHidden: Volatile<string[] | undefined>
 }

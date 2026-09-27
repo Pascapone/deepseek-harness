@@ -25,6 +25,8 @@ import type { AgentPresetOption } from './settings-store.ts'
 export interface AgentPresetSeatState {
   /** Presets the deployment supplies; empty means the chip renders nothing. */
   options: readonly AgentPresetOption[]
+  /** Full roster for naming the current preset even when hidden from choices. */
+  displayOptions?: readonly AgentPresetOption[]
   /** The staged choice, empty until the roster loads. */
   current: string
   /** A rejected apply's message, cleared by the next attempt. */
@@ -108,7 +110,8 @@ export class AgentPresetSeatController {
     this.fallback = presets.find(preset => preset.isDefault)?.id ?? presets[0]?.id ?? ''
     const session = this.currentSession()
     this.set({
-      options: presetOptions(presets),
+      options: presetOptions(presets.filter(preset => preset.hiddenFromPicker !== true)),
+      displayOptions: presetOptions(presets),
       // Staged pick first, then the composition the current session
       // already carries, then the Host-effective default. The middle term is
       // what keeps a late-landing load from regressing the display after

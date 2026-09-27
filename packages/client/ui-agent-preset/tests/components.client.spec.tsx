@@ -145,6 +145,14 @@ describe('the new-session chip', () => {
     expect(screen.getByRole('button').textContent).toContain(en.presetStandardName)
   })
 
+  it('labels a hidden current preset without offering it as a menu choice', () => {
+    renderSeat({ current: 'standard', options: [{ id: 'mine' }], displayOptions: [{ id: 'standard' }, { id: 'mine' }] })
+    expect(screen.getByRole('button').textContent).toContain(en.presetStandardName)
+    fireEvent.click(screen.getByRole('button'))
+    expect(screen.queryByRole('menuitem', { name: /Standard mode/ })).toBeNull()
+    expect(screen.getByRole('menuitem', { name: /mine/ })).toBeTruthy()
+  })
+
   it('falls back to the id when the staged preset published no name', () => {
     renderSeat({ current: 'mine' })
 

@@ -226,6 +226,19 @@ it('resolves the saved default over the deployment default, and drops a removed 
   expect(ctx.agentPresets.defaultId).toBe('standard')
 })
 
+it('hides picker choices without disabling presets or subagent composition', async () => {
+  const ctx = await harness({ live: true })
+  contexts.push(ctx)
+  await declare(ctx, contribution('standard'))
+  await declare(ctx, contribution('minimal'))
+  await liveRegistries.get(ctx)!.update({ pickerHidden: ['minimal'] })
+  const rows = (await ctx.agentPresets.remoteExportList()).presets
+  expect(rows.find(row => row.id === 'minimal')).toMatchObject({ hiddenFromPicker: true, isDefault: false })
+  expect(rows.find(row => row.id === 'standard')).toMatchObject({ hiddenFromPicker: false, isDefault: true })
+  expect((await ctx.agentPresets.resolve('minimal')).id).toBe('minimal')
+  expect((await agentOn(ctx, 'still-available', 'minimal')).id).toBeDefined()
+})
+
 it('ignores a retired modeSelectionEnabled field in the user patch', async () => {
   const ctx = await harness({ live: true })
   contexts.push(ctx)

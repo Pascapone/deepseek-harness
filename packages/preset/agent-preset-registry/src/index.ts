@@ -53,6 +53,7 @@ export class AgentPresetRegistry extends TypertRemoteService {
   static Config = z.object({
     default: z.string().required(),
     selectedDefault: z.string().volatile(),
+    pickerHidden: z.array(z.string()).volatile(),
   })
   private readonly owner: Context
   private readonly definitions = new Map<string, Definition>()
@@ -170,7 +171,8 @@ export class AgentPresetRegistry extends TypertRemoteService {
   @Remote('list')
   async remoteExportList(): Promise<AgentPresetRoster> {
     const defaultId = this.defaultId
-    return { presets: (await this.list()).map(row => ({ ...row, isDefault: row.id === defaultId })) }
+    const hidden = new Set(this.config.pickerHidden.get() ?? [])
+    return { presets: (await this.list()).map(row => ({ ...row, isDefault: row.id === defaultId, hiddenFromPicker: hidden.has(row.id) })) }
   }
 
   /** Resolve an identity without starting an Agent.
