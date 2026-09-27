@@ -23,6 +23,8 @@ export interface PaneCallbacks {
   readonly onDividerPressed: (splitId: SplitId, index: number, event: ReactPointerEvent<HTMLElement>) => void
   /** Why a pane cannot split right now, or `undefined` while it can. */
   readonly splitBlock: (paneId: PaneId) => SplitBlock | undefined
+  /** Embedder controls before the built-in split, with their own measured room rule. */
+  readonly renderPaneActions?: (paneId: PaneId) => ReactNode
   /** Hide blocked split controls instead of rendering them disabled. */
   readonly hideSplitWhenBlocked?: boolean
   /** Whether a pane's strip draws the add control. */

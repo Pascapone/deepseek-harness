@@ -205,7 +205,7 @@ describe.skipIf(process.platform === 'win32')('Web sidebar shortcuts', () => {
       expect(await disabled.isDisabled()).toBe(true)
       await disabled.locator('..').focus()
       const splitKeys = primary === 'Meta' ? '⇧ ⌘ ,' : 'Ctrl + Shift + ,'
-      await page.getByRole('tooltip', { name: `Two panes is the limit ${splitKeys}`, exact: true }).waitFor()
+      await page.getByRole('tooltip', { name: `One vertical split is the limit ${splitKeys}`, exact: true }).waitFor()
 
       await bind(page, primary, 'Workspace files', 'Split')
       await right.getByRole('tab').focus()

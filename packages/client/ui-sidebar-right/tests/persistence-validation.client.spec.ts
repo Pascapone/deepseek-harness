@@ -37,12 +37,11 @@ it.each([
   ['split cycle', { minted: 4, layout: { ...splitLayout, nodes: { ...splitLayout.nodes, split3: { ...split, children: ['split3', 'pane1'] } } } }],
   ['invalid split sum', { minted: 4, layout: { ...splitLayout, nodes: { ...splitLayout.nodes, split3: { ...split, sizes: [0.4, 0.4] } } } }],
   ['mismatched split sizes', { minted: 4, layout: { ...splitLayout, nodes: { ...splitLayout.nodes, split3: { ...split, sizes: [0.2, 0.3, 0.5] } } } }],
-  ['vertical split', { minted: 4, layout: { ...splitLayout, nodes: { ...splitLayout.nodes, split3: { ...split, axis: 'column' } } } }],
   ['three docked panes', { minted: 5, layout: { ...splitLayout, nodes: {
     ...splitLayout.nodes, pane5: { ...otherPane, id: 'pane5' },
     split3: { ...split, children: ['pane1', 'pane4', 'pane5'], sizes: [0.3, 0.3, 0.4] },
   } } }],
-  ['nested split', { minted: 6, layout: { ...splitLayout, nodes: {
+  ['duplicate axis split', { minted: 6, layout: { ...splitLayout, nodes: {
     ...splitLayout.nodes, pane6: { ...otherPane, id: 'pane6' },
     split3: { ...split, children: ['pane1', 'split5'] },
     split5: { ...split, id: 'split5', children: ['pane4', 'pane6'] },
@@ -58,6 +57,16 @@ it.each([
   expect(localStorage.getItem(key)).toBeNull()
   expect(readSidebarLayout('other')).toEqual(empty)
   expect(new SidebarTabInventory().source.getSnapshot()).toEqual([])
+})
+
+it.each(['row', 'column'] as const)('restores a %s split with one nested orthogonal split', (axis) => {
+  const nested = { ...split, id: 'split5', axis: axis === 'row' ? 'column' : 'row', children: ['pane4', 'pane6'] }
+  const saved = { minted: 6, layout: { ...splitLayout, nodes: { ...splitLayout.nodes,
+    split3: { ...split, axis, children: ['pane1', 'split5'] }, split5: nested,
+    pane6: { ...otherPane, id: 'pane6' },
+  } } }
+  localStorage.setItem(key, JSON.stringify({ bySession: { [session]: saved } }))
+  expect(readSidebarLayout(session)?.layout.nodes).toEqual(JSON.parse(JSON.stringify(saved.layout.nodes)))
 })
 
 it('discards structurally invalid JSON envelopes and keeps an empty saved Session usable', () => {

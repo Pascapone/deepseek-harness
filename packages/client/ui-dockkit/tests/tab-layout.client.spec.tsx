@@ -5,8 +5,9 @@ import type { ComponentProps } from 'react'
 import { TabLayout } from '../src/components/TabLayout.tsx'
 import { DockController } from '../src/engine/controller.ts'
 import { getNode, getPane } from '../src/engine/tree.ts'
+import { applyOp } from '../src/engine/operations.ts'
 import type { PaneCallbacks } from '../src/components/render.ts'
-import type { TabId } from '../src/contract/types.ts'
+import type { PaneId, SplitId, TabId } from '../src/contract/types.ts'
 import { followPointer } from '../src/components/pointer.ts'
 import { seededController, TEST_LABELS } from './fixtures.client.ts'
 
@@ -175,29 +176,25 @@ it('does not require a docked strip when a selected tab becomes floating in the 
   expect(h.node(`[data-dockkit-content="${second}"]`).hasAttribute('data-dockkit-float')).toBe(true)
 })
 
-it('renders an empty pane and rejects unsupported docked trees', () => {
+it.each(['row', 'column'] as const)('renders stable tab cells across a %s split and an orthogonal split', (axis) => {
   const controller = new DockController()
   controller.setExpanded(true)
+  const tab = controller.openContent({ kind: 'file', contentId: 'file:a', title: 'A' })
   const h = mounted(controller)
-  expect(h.node('[data-dockkit-empty]')).toBeDefined()
-  controller.openContent({ kind: 'file', contentId: 'file:a', title: 'A' })
-  controller.splitPane()
-  const state = controller.getSnapshot().state
-  const root = getNode(state, state.rootId)
-  if (root.kind !== 'split') throw new Error('expected a split')
-  vi.spyOn(console, 'error').mockImplementation(() => {})
-  const suppress = (event: ErrorEvent): void => {
-    if (event.error instanceof Error && event.error.message === 'DockLayout requires one pane or two horizontally split panes') {
-      event.preventDefault()
-    }
-  }
-  window.addEventListener('error', suppress)
-  try {
-    expect(() =>{  h.redraw({ state: { ...state, nodes: { ...state.nodes, [root.id]: { ...root, axis: 'column' } } } }) })
-      .toThrow('two horizontally split panes')
-  } finally {
-    window.removeEventListener('error', suppress)
-  }
+  const body = h.body(tab)
+  const first = controller.getSnapshot().state
+  const paneId = first.rootId as PaneId
+  const second = applyOp(first, { type: 'split', paneId, axis,
+    direction: 'after', newPaneId: 'pane100' as PaneId, newSplitId: 'split101' as SplitId }).state
+  h.redraw({ state: second })
+  expect(h.body(tab)).toBe(body)
+  expect(h.node('[data-dockkit-split]').style[axis === 'row' ? 'gridTemplateColumns' : 'gridTemplateRows']).toContain('0.5fr')
+  const third = applyOp(second, { type: 'split', paneId, axis: axis === 'row' ? 'column' : 'row',
+    direction: 'after', newPaneId: 'pane102' as PaneId, newSplitId: 'split103' as SplitId }).state
+  h.redraw({ state: third })
+  expect(h.body(tab)).toBe(body)
+  expect(h.view.container.querySelectorAll('[data-dockkit-divider]')).toHaveLength(2)
+  expect(h.view.container.querySelectorAll('[data-dockkit-empty]')).toHaveLength(2)
 })
 
 it('keeps a superseding gesture marker when an older follower detaches', () => {

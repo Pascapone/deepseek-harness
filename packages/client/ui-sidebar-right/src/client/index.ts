@@ -197,6 +197,7 @@ export function apply(ctx: ClientContext): void {
           'sidebar.right.pane.tab': { kind: 'keyed', scope: 'session', inject: { hooks: { tabInfo: tabInfoFactory } } },
           'sidebar.right.pane.tab.title': { kind: 'keyed', scope: 'session', inject: { hooks: { tabInfo: tabInfoFactory } } },
           'sidebar.right.tab.menu.item': { kind: 'list', scope: 'session' },
+          'sidebar.right.pane.action': { kind: 'list', scope: 'session' },
           'sidebar.right.tab.title.leading': { kind: 'list', scope: 'session' },
         },
         store,

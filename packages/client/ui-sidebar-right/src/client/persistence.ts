@@ -28,6 +28,7 @@ function validateReferences(value: z.infer<typeof surface>): void {
   const { layout, minted } = value
   const reject: () => never = () => { throw new Error('Invalid saved sidebar layout references') }
   const visited = new Set<string>()
+  const axes = new Set<string>()
   const usedTabs = new Set<string>()
   const pending = [{ id: layout.rootId, host: 'dock' }, ...layout.floats.map(id => ({ id, host: 'float' }))]
   for (const [id, entry] of [...Object.entries(layout.nodes), ...Object.entries(layout.tabs)]) {
@@ -38,9 +39,10 @@ function validateReferences(value: z.infer<typeof surface>): void {
     if (visited.has(id) || entry === undefined) reject()
     visited.add(id)
     if (entry.kind === 'split') {
-      if (host !== 'dock' || id !== layout.rootId || entry.axis !== 'row' || entry.children.length !== 2
+      if (host !== 'dock' || axes.has(entry.axis) || entry.children.length !== 2
         || entry.children.length !== entry.sizes.length
         || Math.abs(entry.sizes.reduce((sum, size) => sum + size, 0) - 1) > 1e-9) reject()
+      axes.add(entry.axis)
       pending.push(...entry.children.map(id => ({ id, host })))
     } else {
       if (entry.host !== host || (host === 'float' ? entry.rect === undefined || entry.tabs.length !== 1 : entry.rect !== undefined)) reject()

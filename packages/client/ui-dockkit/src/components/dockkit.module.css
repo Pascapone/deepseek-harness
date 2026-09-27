@@ -205,6 +205,28 @@
   background: linear-gradient(to bottom, transparent, var(--dsw-alias-label-caption) 50%, transparent) center / 1px 100% no-repeat;
 }
 
+.tabLayoutDividerColumn {
+  width: auto;
+  height: 0;
+  cursor: row-resize;
+}
+
+.tabLayoutDividerColumn::before {
+  top: -0.25px;
+  left: 0;
+  right: 0;
+  width: auto;
+  height: 0.5px;
+}
+
+.tabLayoutDividerColumn::after {
+  top: -4px;
+  bottom: -4px;
+  left: 0;
+  right: 0;
+  background: linear-gradient(to right, transparent, var(--dsw-alias-label-caption) 50%, transparent) center / 100% 1px no-repeat;
+}
+
 /* A body that overflows scrolls inside its pane; nothing escapes the pane. */
 .pane {
   display: flex;

@@ -141,17 +141,27 @@ describe('createSidebarRightStore — the sequence', () => {
     expect(dockPaneIds(layout())).toEqual([secondPane])
   })
 
-  it('allows two docked panes and rejects further splits without recording', () => {
+  it.each(['row', 'column'] as const)('combines %s with the other axis once and undoes either order', (first) => {
     const { actions, layout, entries, expand } = harness()
     expand()
-    actions.splitPane(SESSION)
-    expect(dockPaneIds(layout())).toHaveLength(2)
+    actions.splitPane(SESSION, undefined, undefined, first)
+    const other = first === 'row' ? 'column' : 'row'
+    const afterFirst = layout()
+    expect(getSplit(afterFirst, afterFirst.rootId).axis).toBe(first)
+    actions.splitPane(SESSION, undefined, undefined, other)
+    const combined = layout()
+    expect(dockPaneIds(combined)).toHaveLength(3)
+    expect(Object.values(combined.nodes).filter(node => node.kind === 'split').map(node => node.axis).sort()).toEqual(['column', 'row'])
     const before = entries()
     const settled = vi.fn()
-    actions.splitPane(SESSION, undefined, settled)
-    expect(dockPaneIds(layout())).toHaveLength(2)
+    actions.splitPane(SESSION, undefined, settled, first)
+    actions.splitPane(SESSION, undefined, settled, other)
     expect(entries()).toBe(before)
     expect(settled).not.toHaveBeenCalled()
+    actions.undo(SESSION)
+    expect(layout()).toEqual(afterFirst)
+    actions.redo(SESSION)
+    expect(layout()).toEqual(combined)
   })
 
   it('rejects vertical drops and keeps split ratios within twenty to eighty percent', () => {

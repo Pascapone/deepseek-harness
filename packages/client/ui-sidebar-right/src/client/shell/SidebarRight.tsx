@@ -36,15 +36,15 @@ import type {
 } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '../contract/slots.ts'
 import type { DockIntents, DockMode, FloatRect, TabId, TabRecord, TabRenderer } from '@deepseek-ai/dsh-client-ui-dockkit'
-import { canSplit, dockPaneIds, DockLayout, findPaneContentTab } from '@deepseek-ai/dsh-client-ui-dockkit'
-import type { HalvesFit, LayoutState, PaneId } from '@deepseek-ai/dsh-client-ui-dockkit'
+import { DockLayout, findPaneContentTab } from '@deepseek-ai/dsh-client-ui-dockkit'
+import type { HalvesFit, LayoutState, PaneId, SplitAxis } from '@deepseek-ai/dsh-client-ui-dockkit'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { GUIDE_KIND, pageAddress } from '../contract/seed.ts'
 import { dockLabels } from '../labels.ts'
 import type { SidebarRightOpenTabOptions } from '../service.ts'
 import type { SidebarRightTabDefinition } from '../tab-registry.ts'
 import type { createSidebarRightStore, SurfaceState } from '../stores.ts'
-import { canCloseTab } from '../stores.ts'
+import { canCloseTab, splitAllowed } from '../stores.ts'
 import type { TabOccurrence } from '../tab-domain.ts'
 import type { SidebarRightTabNavigation } from '../contract/slots.ts'
 import type { TabHookContext } from '../tab-info.ts'
@@ -55,7 +55,7 @@ import { closeWithPaneFocus, openWithPaneFocus } from './close-focus.ts'
 type Store = PropsStore<ReturnType<typeof createSidebarRightStore>>
 
 /** The child seats this component renders. */
-type Children = PropsRenderSlots<'sidebar.right.pane.tab' | 'sidebar.right.pane.tab.title' | 'sidebar.right.tab.menu.item' | 'sidebar.right.tab.title.leading'>
+type Children = PropsRenderSlots<'sidebar.right.pane.tab' | 'sidebar.right.pane.tab.title' | 'sidebar.right.tab.menu.item' | 'sidebar.right.tab.title.leading' | 'sidebar.right.pane.action'>
 
 /** What the panel reports to the frame: drawn or not, and whether it wants a track. */
 export interface SidebarRightPresentation {
@@ -92,7 +92,7 @@ export interface SidebarRightInjected {
     /** Every session's surface as last committed; the mounted one is `surfaces[sessionId]`. */
     surfaces: Readonly<Record<string, SurfaceState>>
     /** The room rule's verdict for a docked pane, as the kit last measured it. */
-    canSplitPane: (paneId: PaneId) => boolean
+    canSplitPane: (paneId: PaneId, axis: SplitAxis) => boolean
     /** Commit a keyboard/menu close and retain focus on a surviving visible pane. */
     closeWithFocus: (paneId: PaneId, close: () => void) => void
     /** Commit a page operation and focus the pane it selects. */
@@ -338,7 +338,11 @@ function SidebarPanel(panel: PanelProps & { width: number; panelRef: RefObject<H
       <div className={css.panelBody}>
         <DockLayout
           state={surface.layout}
-          canSplit={canSplit(surface.layout) && dockPaneIds(surface.layout).length < 2}
+          canSplit={splitAllowed(surface.layout, 'row')}
+          canSplitColumn={splitAllowed(surface.layout, 'column')}
+          renderPaneActions={(paneId, blocked) => renderSlot('sidebar.right.pane.action', {
+            paneId, ...blocked === undefined ? {} : { blocked },
+          })}
           dropZones="horizontal"
           minPaneFraction={0.2}
           canAddTab={paneId => guideIn(surface.layout, paneId) === undefined}
@@ -439,7 +443,7 @@ export function RightbarSeat({
       ? bindService({ sessionId, actions, surfaces, autoFullscreen,
         closeWithFocus: (paneId, close) => { closeWithPaneFocus(document, sessionId, paneId, close) },
         openWithFocus: (open) => { openWithPaneFocus(document, sessionId, open) },
-        canSplitPane: paneId => room.current.get(paneId)?.row !== false })
+        canSplitPane: (paneId, axis) => room.current.get(paneId)?.[axis] !== false })
       : undefined,
     [bindService, sessionId, actions, surfaces, autoFullscreen, active],
   )

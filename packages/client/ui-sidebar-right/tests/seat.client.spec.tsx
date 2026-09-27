@@ -728,6 +728,29 @@ describe('slot-owned useTabInfo', () => {
     expect(document.querySelector('[data-dockkit-tab-menu]')).toBeNull()
   })
 
+  it('renders plugin pane actions before the split and disables the used axis', async () => {
+    const h = await mountSeat()
+    h.open()
+    let release = () => {}
+    await act(async () => {
+      release = h.runtime.slots.register({ name: 'sidebar.right.pane.action', id: 'test' },
+        ({ paneId, blocked }: PropsRuntime<'sidebar.right.pane.action'>) =>
+          <button data-column-split={paneId} disabled={blocked !== undefined}
+            onClick={() => { h.controller.split(paneId, 'column') }}>Column</button>)
+    })
+    const button = element(h.view.container, '[data-column-split]')
+    const native = element(h.view.container, '[data-dockkit-split-button]')
+    expect(button.compareDocumentPosition(native) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    fireEvent.click(button)
+    expect(h.layout().nodes[h.layout().rootId]).toHaveProperty('axis', 'column')
+    expect(h.view.container.querySelectorAll('[data-column-split]')).toHaveLength(2)
+    expect(element(h.view.container, '[data-column-split]').hasAttribute('disabled')).toBe(true)
+    act(() => { h.controller.split(undefined, 'row') })
+    expect(dockPaneIds(h.layout())).toHaveLength(3)
+    await act(async () => { release() })
+    expect(h.view.container.querySelector('[data-column-split]')).toBeNull()
+  })
+
   it('keeps the current binding in the disabled split tooltip when it changes or is cleared', async () => {
     const h = await mountSeat()
     const split: ShortcutCatalogEntry = {
@@ -743,12 +766,12 @@ describe('slot-owned useTabInfo', () => {
     })
     const anchor = element(h.view.container, '[data-dockkit-split-button]').parentElement!
     fireEvent.focus(anchor)
-    expect(document.querySelector('[role="tooltip"]')?.getAttribute('aria-label')).toBe('Two panes is the limit ⌘ \\')
+    expect(document.querySelector('[role="tooltip"]')?.getAttribute('aria-label')).toBe('One vertical split is the limit ⌘ \\')
     act(() => { h.catalog.set([{ ...split, binding: { code: 'KeyG', modifiers: ['control'] },
       keys: ['Ctrl', '+', 'G'], aria: 'Control+G' }]) })
-    expect(document.querySelector('[role="tooltip"]')?.getAttribute('aria-label')).toBe('Two panes is the limit Ctrl + G')
+    expect(document.querySelector('[role="tooltip"]')?.getAttribute('aria-label')).toBe('One vertical split is the limit Ctrl + G')
     act(() => { h.catalog.set([{ ...split, binding: null, keys: [], aria: undefined }]) })
-    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('Two panes is the limit')
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('One vertical split is the limit')
   })
 
   it('advertises configured pane and page-close controls', async () => {

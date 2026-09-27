@@ -101,6 +101,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      * registrant the menu shows only the kit's own layout actions.
      */
     'sidebar.right.tab.menu.item': { kind: 'list'; scope: 'session'; owner: SidebarRightTabMenuOwnerProps }
+    /** Controls before the built-in left/right split in each docked pane's strip. */
+    'sidebar.right.pane.action': {
+      kind: 'list'
+      scope: 'session'
+      owner: { paneId: PaneId; blocked?: 'budget' | 'height' }
+    }
     /** Compact controls at the start of every tab title, docked or floating. */
     'sidebar.right.tab.title.leading': { kind: 'list'; scope: 'session'; owner: { tab: TabRecord } }
   }

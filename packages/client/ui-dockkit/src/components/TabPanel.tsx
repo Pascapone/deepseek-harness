@@ -364,6 +364,7 @@ export function TabStrip({ state, pane, callbacks }: TabPanelProps): ReactNode {
         </Tooltip>
       )}
       <div className={css.stripFill} data-dockkit-strip-fill />
+      {callbacks.renderPaneActions?.(pane.id)}
       {!(callbacks.hideSplitWhenBlocked && block !== undefined) && (
         <Tooltip label={block === undefined ? callbacks.labels.splitPane : splitBlockedTitle(callbacks.labels, block)} shortcutKeys={callbacks.labels.splitPaneKeys} side="bottom" delayMs={500}>
           <span

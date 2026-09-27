@@ -34,6 +34,10 @@ export interface DockSurfaceProps {
    * split control disabled with `labels.splitPaneNarrow` (see README).
    */
   readonly canSplit: boolean
+  /** Whether a top/bottom split is available under the embedding panel's policy. */
+  readonly canSplitColumn?: boolean
+  /** Additional controls rendered before the built-in left/right split. */
+  readonly renderPaneActions?: (paneId: PaneId, blocked?: 'budget' | 'height') => ReactNode
   /** Hide a blocked split control — pane budget spent or pane too narrow — instead of rendering it disabled; defaults to false. */
   readonly hideSplitWhenBlocked?: boolean
   /** Body drop geometry: all edge bands, or left/right halves with whole-pane moves once splitting is unavailable. */
@@ -163,8 +167,8 @@ function sameSizes(a: readonly number[], b: readonly number[]): boolean {
 
 /** The split tree and the gestures over it. */
 function Surface({
-  state, canSplit, canAddTab, canCloseTab, intents, labels, renderTab, renderTabTitle, renderTabMenuItems, chrome, onRoom,
-  draw,
+  state, canSplit, canSplitColumn, canAddTab, canCloseTab, intents, labels, renderTab, renderTabTitle,
+  renderTabMenuItems, renderPaneActions, chrome, onRoom, draw,
   dropZones = 'edges', minPaneFraction = MIN_PANE_FRACTION, hideSplitWhenBlocked = false,
 }: DockSurfaceProps & { readonly draw: (callbacks: PaneCallbacks, preview: SizePreview | undefined) => ReactNode }): ReactNode {
   const surface = useRef<HTMLDivElement | null>(null)
@@ -182,8 +186,8 @@ function Surface({
 
   // The room rule reads pixels, which the layout state does not carry: measure
   // after every commit (a split, a divider drag, a closed tab all move panes)
-  // and whenever the surface itself is resized (the embedder's column dragged
-  // wider or narrower). A reading that changed nothing renders nothing.
+  // and whenever the surface or strip contents resize (column drag or new
+  // plugin controls). A reading that changed nothing renders nothing.
   const remeasure = useCallback((): void => {
     withSurface((root) => {
       const next = measurePaneFits(root, hideSplitWhenBlocked)
@@ -197,8 +201,9 @@ function Surface({
     if (root === null || typeof ResizeObserver === 'undefined') return undefined
     const observer = new ResizeObserver(() => { remeasure() })
     observer.observe(root)
+    for (const item of root.querySelectorAll('[data-dockkit-strip-tabs], [data-dockkit-strip-fill]')) observer.observe(item)
     return () => { observer.disconnect() }
-  }, [remeasure])
+  }, [remeasure, state.nodes])
 
   /** Why a pane cannot split right now: the budget first, then its own width. */
   const splitBlock = (paneId: PaneId): SplitBlock | undefined => {
@@ -252,12 +257,17 @@ function Surface({
       if (container === null) return
       const split = getSplit(state, splitId)
       const box = container.getBoundingClientRect()
+      const siblings = container.dataset.dockkitSplit === splitId ? undefined : split.children.map(id =>
+        container.querySelector<HTMLElement>(`[data-dockkit-pane="${id}"]`)?.getBoundingClientRect())
+      const extent = siblings !== undefined && siblings.every((rect): rect is DOMRect => rect !== undefined)
+        ? siblings.reduce((sum, rect) => sum + (split.axis === 'row' ? rect.width : rect.height), 0)
+        : split.axis === 'row' ? box.width : box.height
       const drag: DividerDrag = {
         splitId,
         index,
         axis: split.axis,
         origin: split.axis === 'row' ? event.clientX : event.clientY,
-        extent: split.axis === 'row' ? box.width : box.height,
+        extent,
         sizes: split.sizes,
       }
       // A release that left the fractions where they were — a click on the
@@ -275,6 +285,8 @@ function Surface({
       })
     },
     splitBlock,
+    ...renderPaneActions === undefined ? {} : { renderPaneActions: (paneId: PaneId) => renderPaneActions(paneId,
+      !canSplitColumn ? 'budget' : fitOf(fits, paneId).column ? undefined : 'height') },
     hideSplitWhenBlocked,
     canAddTab: canAddTab ?? ALWAYS,
     canCloseTab: canCloseTab ?? ALWAYS,
@@ -302,11 +314,11 @@ export function DockSurface(props: DockSurfaceProps): ReactNode {
     <PaneTree state={props.state} nodeId={props.state.rootId} callbacks={callbacks} preview={preview} />} />
 }
 
-/** Horizontal Sidebar layout with stable tab containers across docking and floating. */
+/** Sidebar grid with stable tab containers across splitting, docking and floating. */
 export type DockLayoutProps = DockSurfaceProps & TabRetention
 
 /**
- * Render one pane or two horizontal panes, and their floats, in one stable content tree.
+ * Render up to one split along each axis, and floats, in one stable content tree.
  * @param props - layout, gestures and lazy body-retention policy.
  * @returns the layout; the containing ancestors must not clip or establish a fixed-position containing block.
  */

@@ -29,7 +29,7 @@
 import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-store'
 import { clearSidebarLayout, readSidebarLayout, writeSidebarLayout } from './persistence.ts'
 import type {
-  DockMode, DockZone, FloatRect, History, LayoutOp, LayoutState, Mint, PaneId, SplitId, TabId, TabRecord,
+  DockMode, DockZone, FloatRect, History, LayoutOp, LayoutState, Mint, PaneId, SplitAxis, SplitId, TabId, TabRecord,
 } from '@deepseek-ai/dsh-client-ui-dockkit'
 import {
   activeDockPaneId, createInitialState, dockPaneIds, EMPTY_HISTORY, findContentTab, findPaneContentTab, findTabPane, getPane,
@@ -69,6 +69,16 @@ type SurfacePlan = (state: LayoutState, mint: Mint, makeTab: (id: TabId) => TabR
 export function canCloseTab(surface: SurfaceState, tabId: TabId): boolean {
   const tab = surface.layout.tabs[tabId]
   return tab !== undefined && !(tab.kind === GUIDE_KIND && soleDockedTab(surface.layout, tabId))
+}
+
+/** A Session has at most one docked split per axis; floats do not spend this limit.
+ * @param layout - current Session layout.
+ * @param axis - direction of the requested split.
+ * @returns whether another split on that axis fits the dock budget.
+ */
+export function splitAllowed(layout: LayoutState, axis: SplitAxis): boolean {
+  return dockPaneIds(layout).length < 3
+    && !Object.values(layout.nodes).some(node => node.kind === 'split' && node.axis === axis)
 }
 
 /** Build the currently selected default tab. */
@@ -223,7 +233,7 @@ type SidebarRightActions = {
   setExpanded: (draft: SidebarRightState, sessionId: string, expanded: boolean) => void
   toggleExpanded: (draft: SidebarRightState, sessionId: string) => void
   setMode: (draft: SidebarRightState, sessionId: string, mode: DockMode) => void
-  splitPane: (draft: SidebarRightState, sessionId: string, paneId?: PaneId, settled?: (paneId: PaneId) => void) => void
+  splitPane: (draft: SidebarRightState, sessionId: string, paneId?: PaneId, settled?: (paneId: PaneId) => void, axis?: SplitAxis) => void
   openContent: (
     draft: SidebarRightState,
     sessionId: string,
@@ -286,12 +296,12 @@ export function createSidebarRightStore(
       },
       // `settled` reports the pane the split created, synchronously, because
       // actions return nothing; it is not called when nothing was split.
-      splitPane: (d, sessionId: string, paneId?: PaneId, settled?: (paneId: PaneId) => void) => {
+      splitPane: (d, sessionId: string, paneId?: PaneId, settled?: (paneId: PaneId) => void, axis: SplitAxis = 'row') => {
         d.bySession = seat(d, sessionId, (s) => {
-          const next = advance(s, (state, mint, makeTab) => dockPaneIds(state).length >= 2
+          const next = advance(s, (state, mint, makeTab) => !splitAllowed(state, axis)
             || getPane(state, paneId ?? activeDockPaneId(state)).tabs.length === 0
             ? []
-            : planSplitPane(state, mint, paneId, makeTab), seed)
+            : planSplitPane(state, mint, paneId, makeTab, axis), seed)
           if (settled !== undefined && next !== s) {
             const before = new Set(dockPaneIds(s.layout))
             for (const id of dockPaneIds(next.layout)) {
@@ -338,7 +348,7 @@ export function createSidebarRightStore(
             ? held
             : intent.revealIfOpened === false ? undefined : findContentTab(state, contentId, kind)
           let openedInNewPane: TabId | undefined
-          const split = intent.preferNewPane === true && replace === undefined && revealed === undefined
+          const split = intent.preferNewPane === true && replace === undefined && revealed === undefined && splitAllowed(state, 'row')
             ? planSplitPane(state, mint, paneId, (id) => {
               openedInNewPane = id
               return { id, kind, contentId, title }
@@ -401,7 +411,7 @@ export function createSidebarRightStore(
       dropTab: (d, sessionId: string, tabId: TabId, paneId: PaneId, zone: DockZone) => {
         d.bySession = seat(d, sessionId, s => advance(s, (state, mint, makeTab) => {
           if (zone === 'top' || zone === 'bottom') return []
-          if (zone !== 'center' && dockPaneIds(state).length >= 2) return []
+          if (zone !== 'center' && !splitAllowed(state, 'row')) return []
           const plan = (): readonly LayoutOp[] => planDropTab(state, mint, tabId, paneId, zone, makeTab)
           return zone === 'center' ? arriving(state, tabId, paneId, plan) : plan()
         }, seed))

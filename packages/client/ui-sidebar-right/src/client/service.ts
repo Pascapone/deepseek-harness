@@ -33,14 +33,14 @@
 import { sidebarTargetFromElement, type SidebarRightTarget } from './focus.ts'
 import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
 import { createSnapshotStore, type ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
-import type { FloatRect, LayoutState, PaneId, TabId, TabRecord } from '@deepseek-ai/dsh-client-ui-dockkit'
-import { activeDockPaneId, canSplit, findContentTab, dockPaneIds, findTabPane, getPane } from '@deepseek-ai/dsh-client-ui-dockkit'
+import type { FloatRect, LayoutState, PaneId, SplitAxis, TabId, TabRecord } from '@deepseek-ai/dsh-client-ui-dockkit'
+import { activeDockPaneId, findContentTab, findTabPane, getPane } from '@deepseek-ai/dsh-client-ui-dockkit'
 import type { BoundActions } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SidebarRightNavigationParams, SidebarRightResourceParams, SidebarRightTabParamsFor } from './contract/params.ts'
 import { pageAddress } from './contract/seed.ts'
 import type { SidebarRightTabClaim, SidebarRightTabRegistry } from './tab-registry.ts'
-import { canCloseTab, type SidebarRightState, type SurfaceState } from './stores.ts'
+import { canCloseTab, splitAllowed, type SidebarRightState, type SurfaceState } from './stores.ts'
 import type { createSidebarRightStore } from './stores.ts'
 import { TabDomain, type PinResource } from './tab-domain.ts'
 import { SidebarTabInventory } from './tab-inventory.ts'
@@ -118,7 +118,7 @@ export interface SidebarRightBinding {
    * The room rule's verdict for a docked pane, as the kit last measured it:
    * whether two working halves would fit. Unmeasured panes fit.
    */
-  readonly canSplitPane: (paneId: PaneId) => boolean
+  readonly canSplitPane: (paneId: PaneId, axis: SplitAxis) => boolean
   /** Commit a keyboard/menu close and retain focus on a surviving visible pane. */
   readonly closeWithFocus: (paneId: PaneId, close: () => void) => void
   /** Commit a page operation and focus the pane it selects. */
@@ -218,14 +218,14 @@ export interface ISidebarRight {
    */
   focus(tabId: TabId): void
   /**
-   * Split a docked pane to its right and seed the new pane, under the same
-   * pane budget and room rule as the strip's split control. Recorded when it
-   * splits.
+   * Split a docked pane to the right or below and seed the new pane, under the
+   * same per-axis limit and room rule as the strip controls. Recorded when split.
    * @param paneId - the pane to split; defaults to the active docked pane.
+   * @param axis - row splits left/right, column splits top/bottom; defaults to row.
    * @returns the new pane's id, or `undefined` when nothing was split: the pane
    *   is missing, floating, or empty, the budget is spent, or two halves would not fit.
    */
-  split(paneId?: PaneId): PaneId | undefined
+  split(paneId?: PaneId, axis?: SplitAxis): PaneId | undefined
   /**
    * Take a docked tab out into a floating panel. Recorded.
    * @param tabId - the tab; one that is missing or already floating is left alone.
@@ -447,10 +447,9 @@ export class SidebarRightController implements ISidebarRight {
       && target?.kind === 'pane'
       && target.host === 'dock'
       && target.tabs.length > 0
-      && canSplit(surface.layout)
-      && dockPaneIds(surface.layout).length < 2
+      && splitAllowed(surface.layout, 'row')
       && this.binding?.sessionId === sessionId
-      && this.binding.canSplitPane(target.id)
+      && this.binding.canSplitPane(target.id, 'row')
     const commit = (): void => { actions.openContent(sessionId, {
       kind: claim.kind,
       contentId: claim.contentId,
@@ -648,8 +647,8 @@ export class SidebarRightController implements ISidebarRight {
     if (target.host === 'float') return 'float'
     if (!layout.expanded) return 'collapsed'
     if (getPane(layout, target.paneId).tabs.length === 0) return 'empty'
-    if (!canSplit(layout) || dockPaneIds(layout).length >= 2) return 'budget'
-    if (!this.require().canSplitPane(target.paneId)) return 'width'
+    if (!splitAllowed(layout, 'row')) return 'budget'
+    if (!this.require().canSplitPane(target.paneId, 'row')) return 'width'
     return undefined
   }
 
@@ -670,17 +669,17 @@ export class SidebarRightController implements ISidebarRight {
    * @param paneId - the pane to split; defaults to the active docked pane.
    * @returns the new pane's id, or `undefined` when nothing was split.
    */
-  split(paneId?: PaneId): PaneId | undefined {
+  split(paneId?: PaneId, axis: SplitAxis = 'row'): PaneId | undefined {
     const { sessionId, actions, canSplitPane } = this.require()
     const layout = this.mountedSurface()?.layout
     if (layout === undefined) return undefined
     const target = paneId ?? activeDockPaneId(layout)
     const node = layout.nodes[target]
     if (node === undefined || node.kind !== 'pane' || node.host !== 'dock') return undefined
-    if (!canSplit(layout) || dockPaneIds(layout).length >= 2 || !canSplitPane(target)) return undefined
+    if (!splitAllowed(layout, axis) || !canSplitPane(target, axis)) return undefined
     let created: PaneId | undefined
     this.require().openWithFocus(() => {
-      actions.splitPane(sessionId, target, (id) => { created = id })
+      actions.splitPane(sessionId, target, (id) => { created = id }, axis)
       return created
     })
     return created

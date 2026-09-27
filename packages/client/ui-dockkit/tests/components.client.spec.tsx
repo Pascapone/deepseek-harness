@@ -406,6 +406,7 @@ describe('DockSurface', () => {
     const observer = FakeResizeObserver.latest
     if (observer === undefined) throw new Error('expected the surface to observe its own size')
     expect(observer.observe).toHaveBeenCalledWith(document.querySelector('[data-dockkit-surface]'))
+    expect(observer.observe).toHaveBeenCalledWith(document.querySelector('[data-dockkit-strip-fill]'))
     expect(onRoom).toHaveBeenLastCalledWith(new Map(panes.map(id => [id, { row: true, column: true }])))
     const readings = onRoom.mock.calls.length
 
