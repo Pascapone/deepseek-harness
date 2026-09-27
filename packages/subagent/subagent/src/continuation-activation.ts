@@ -126,7 +126,7 @@ export interface MaterializeInputs {
     descriptor: SubagentDescriptorData
   }
   agentOptions: AgentOptions
-  composition: { persona?: string | undefined; toolFilter?: ToolRestriction | undefined }
+  composition: { persona?: string | undefined; toolFilter?: ToolRestriction | undefined; agentPreset?: string | undefined }
   signal: AbortSignal
 }
 
@@ -620,14 +620,23 @@ export class ContinuableActivationRegistry {
   ): Promise<Activation> {
     const { childId, provider, parent, create } = inputs
     inputs.signal.throwIfAborted()
-    const setup = (childCtx: Context, child: Agent): void => {
+    const setup = async (childCtx: Context, child: Agent): Promise<void> => {
       // Only fresh creation appends the descriptor and delegated policy after
       // the inherited marker; a cold resume replays those persisted events.
       if (create !== undefined) {
         child.session.append('subagent/descriptor', create.descriptor)
         appendDelegatedPolicyOverrides(child.session, create.delegatedPolicies)
       }
-      applyChildComposition(childCtx, parent, inputs.composition)
+      const selected = inputs.composition.agentPreset
+      if (selected !== undefined) {
+        const presets = childCtx.get('agentPresets')
+        if (presets === undefined) throw new SubagentError(`child preset "${selected}" is unavailable`, 'PRESET_UNAVAILABLE')
+        try { await presets.mount(childCtx, selected) }
+        catch (error: unknown) {
+          throw new SubagentError(`child preset "${selected}" is unavailable`, 'PRESET_UNAVAILABLE', { cause: error })
+        }
+      }
+      applyChildComposition(childCtx, parent, inputs.composition, selected === undefined, true)
     }
     const observer = this.observeActivation(provider, childId, parent)
     const handle: AgentHandle = create === undefined

@@ -135,6 +135,21 @@ describe('restrict()', () => {
     expect(ctx.tools.schemas().map(t => t.name).sort()).toEqual(['bash', 'read'])
   })
 
+  it('opt-in includeOwn masks a directly registered tool without exposing its global shadow', async () => {
+    const ctx = await mount()
+    const { scope, key } = await mintAgentScope(ctx, 'a')
+    ctx.tools.register(tool('subagent'))
+    scope.ctx.tools.register(tool('subagent'))
+    scope.ctx.tools.register(tool('subagent_fork'))
+    const lift = scope.ctx.tools.restrict({ deny: ['subagent'], includeOwn: true })
+    expect(ctx.tools.schemas(key).map(t => t.name)).toEqual(['subagent_fork'])
+    expect(ctx.tools.get('subagent', key)).toBeUndefined()
+    expect(await run(ctx, 'subagent', key)).toBe('Error: unknown tool "subagent"')
+    expect(ctx.tools.get('subagent')).toBeDefined()
+    lift()
+    expect(ctx.tools.get('subagent', key)).toBeDefined()
+  })
+
   it('applies snapshotted filters to the live global registry before merging later scope-local tools', async () => {
     const ctx = await mount()
     const denied = await mintAgentScope(ctx, 'denied')
