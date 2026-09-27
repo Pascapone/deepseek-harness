@@ -81,7 +81,8 @@ it('keeps body ancestors through pane moves, floating, raising and docking', () 
   const split = getNode(state, state.rootId)
   if (split.kind !== 'split') throw new Error('expected a split')
   h.redraw({ preview: { splitId: split.id, sizes: [0.3, 0.7] } })
-  expect(h.node('[data-dockkit-split]').style.gridTemplateColumns).toContain('0.3fr')
+  expect(h.view.container.querySelectorAll('[data-dockkit-split]')).toHaveLength(1)
+  expect(h.node('[data-dockkit-divider]').style.left).toBe('30%')
   fireEvent.pointerDown(h.node('[data-dockkit-divider]'), { button: 0, pointerId: 1 })
   expect(h.callbacks.onDividerPressed).toHaveBeenCalledOnce()
   h.redraw({ preview: undefined })
@@ -188,12 +189,19 @@ it.each(['row', 'column'] as const)('renders stable tab cells across a %s split 
     direction: 'after', newPaneId: 'pane100' as PaneId, newSplitId: 'split101' as SplitId }).state
   h.redraw({ state: second })
   expect(h.body(tab)).toBe(body)
-  expect(h.node('[data-dockkit-split]').style[axis === 'row' ? 'gridTemplateColumns' : 'gridTemplateRows']).toContain('0.5fr')
+  expect(h.view.container.querySelectorAll('[data-dockkit-split]')).toHaveLength(1)
+  expect(h.node('[data-dockkit-split]').style.width).toBe('100%')
+  expect(h.node('[data-dockkit-divider]').style[axis === 'row' ? 'left' : 'top']).toBe('50%')
   const third = applyOp(second, { type: 'split', paneId, axis: axis === 'row' ? 'column' : 'row',
     direction: 'after', newPaneId: 'pane102' as PaneId, newSplitId: 'split103' as SplitId }).state
   h.redraw({ state: third })
   expect(h.body(tab)).toBe(body)
+  expect(h.view.container.querySelectorAll('[data-dockkit-split]')).toHaveLength(2)
   expect(h.view.container.querySelectorAll('[data-dockkit-divider]')).toHaveLength(2)
+  // The nested split's wrapper sits inside the first half; its divider halves that half.
+  const nested = h.view.container.querySelector('[data-dockkit-split="split103"]') as HTMLElement
+  expect(nested.style[axis === 'row' ? 'width' : 'height']).toBe('50%')
+  expect(nested.querySelector('[data-dockkit-divider]') !== null).toBe(true)
   expect(h.view.container.querySelectorAll('[data-dockkit-empty]')).toHaveLength(2)
 })
 

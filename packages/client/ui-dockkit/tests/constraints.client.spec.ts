@@ -1,6 +1,6 @@
 /**
- * Interaction limits: the four-pane cap, the five dock regions, and divider
- * clamping. The model itself stays unbounded; these rules gate dispatch.
+ * Interaction limits: unlimited splits, the five dock regions, and divider
+ * clamping. Geometry alone decides when a split fits; these rules gate dispatch.
  */
 import { describe, expect, it } from 'vitest'
 import { applyOp } from '../src/engine/operations.ts'
@@ -30,12 +30,22 @@ function grid(count: number): LayoutState {
 }
 
 describe('pane cap', () => {
-  it('allows splitting up to four docked panes and no further', () => {
-    expect(MAX_DOCK_PANES).toBe(4)
+  it('allows unlimited splits on either axis', () => {
+    expect(MAX_DOCK_PANES).toBe(Infinity)
     expect(canSplit(createInitialState(createIdMinter(), seedTab))).toBe(true)
-    expect(dockPaneCount(grid(4))).toBe(4)
-    expect(canSplit(grid(4))).toBe(false)
-    expect(canSplit(grid(3))).toBe(true)
+    expect(dockPaneCount(grid(6))).toBe(6)
+    expect(canSplit(grid(6))).toBe(true)
+    // Alternating axes nest without hitting a budget.
+    const minter = createIdMinter()
+    let state = createInitialState(minter, seedTab)
+    for (const axis of ['row', 'column', 'row', 'column'] as const) {
+      state = applyOp(state, {
+        type: 'split', paneId: state.activePaneId, axis, direction: 'after',
+        newPaneId: minter.next('pane'), newSplitId: minter.next('split'),
+      }).state
+    }
+    expect(dockPaneCount(state)).toBe(5)
+    expect(canSplit(state)).toBe(true)
   })
 
   it('ignores floating panes when counting the grid', () => {

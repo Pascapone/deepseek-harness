@@ -6,8 +6,8 @@
 import type { DockZone, LayoutState, SplitAxis, SplitDirection } from '../contract/types.ts'
 import { assertNever, dockPaneIds } from './tree.ts'
 
-/** V1 caps the docked grid at four panes; floating panes do not count. */
-export const MAX_DOCK_PANES = 4
+/** No fixed pane cap; geometry alone decides when a split fits. */
+export const MAX_DOCK_PANES = Infinity
 
 /** Smallest fraction a divider drag may leave a pane, as a share of its split. */
 export const MIN_PANE_FRACTION = 0.12
@@ -33,10 +33,10 @@ export function dockPaneCount(state: LayoutState): number {
 /**
  * Whether another docked pane is allowed.
  * @param state - current layout.
- * @returns whether the docked tree is under `MAX_DOCK_PANES`.
+ * @returns true; no fixed pane-count limit applies.
  */
-export function canSplit(state: LayoutState): boolean {
-  return dockPaneCount(state) < MAX_DOCK_PANES
+export function canSplit(_state: LayoutState): boolean {
+  return true
 }
 
 /** The five dock regions a tab can be dropped on. */

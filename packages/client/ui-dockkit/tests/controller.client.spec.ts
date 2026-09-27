@@ -89,16 +89,15 @@ describe('splitting', () => {
     expect(controller.activeDockPaneId()).toBe(paneId)
   })
 
-  it('stops at four panes without recording anything', () => {
+  it('splits past four panes, recording each as one undoable intent', () => {
     const { controller } = expanded()
-    expect(controller.splitPane()).toBe(true)
-    expect(controller.splitPane()).toBe(true)
-    expect(controller.splitPane()).toBe(true)
-    expect(dockPaneCount(controller.getSnapshot().state)).toBe(4)
-    const before = controller.ops.length
-    expect(controller.splitPane()).toBe(false)
-    expect(controller.ops).toHaveLength(before)
-    expect(controller.getSnapshot().canSplit).toBe(false)
+    for (let index = 0; index < 5; index += 1) {
+      expect(controller.splitPane()).toBe(true)
+    }
+    expect(dockPaneCount(controller.getSnapshot().state)).toBe(6)
+    expect(controller.getSnapshot().canSplit).toBe(true)
+    expect(controller.undo()).toBe(true)
+    expect(dockPaneCount(controller.getSnapshot().state)).toBe(5)
   })
 })
 
@@ -170,15 +169,19 @@ describe('drops', () => {
     expect(dockPaneCount(state)).toBe(2)
   })
 
-  it('refuses an edge drop once the grid is full', () => {
+  it('splits on an edge drop past four panes, including the bottom edge', () => {
     const { controller, paneId } = expanded()
     const tabId = controller.openContent({ contentId: 'dsh-resource://file/session/s/a.txt', title: 'a.txt', kind: 'text-preview' })
     controller.splitPane()
     controller.splitPane()
     controller.splitPane()
-    const before = controller.ops.length
-    expect(controller.dropTab(tabId, paneId, 'right')).toBe(false)
-    expect(controller.ops).toHaveLength(before)
+    controller.splitPane()
+    expect(dockPaneCount(controller.getSnapshot().state)).toBe(5)
+    expect(controller.dropTab(tabId, paneId, 'right')).toBe(true)
+    expect(dockPaneCount(controller.getSnapshot().state)).toBe(6)
+    const bottomPane = dockPaneIds(controller.getSnapshot().state).at(-1)!
+    expect(controller.dropTab(tabId, bottomPane, 'bottom')).toBe(true)
+    expect(dockPaneCount(controller.getSnapshot().state)).toBe(7)
   })
 
   it('reorders inside one pane', () => {

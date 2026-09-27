@@ -141,7 +141,7 @@ describe('createSidebarRightStore — the sequence', () => {
     expect(dockPaneIds(layout())).toEqual([secondPane])
   })
 
-  it.each(['row', 'column'] as const)('combines %s with the other axis once and undoes either order', (first) => {
+  it.each(['row', 'column'] as const)('combines %s with the other axis repeatedly and undoes either order', (first) => {
     const { actions, layout, entries, expand } = harness()
     expand()
     actions.splitPane(SESSION, undefined, undefined, first)
@@ -152,19 +152,25 @@ describe('createSidebarRightStore — the sequence', () => {
     const combined = layout()
     expect(dockPaneIds(combined)).toHaveLength(3)
     expect(Object.values(combined.nodes).filter(node => node.kind === 'split').map(node => node.axis).sort()).toEqual(['column', 'row'])
-    const before = entries()
     const settled = vi.fn()
     actions.splitPane(SESSION, undefined, settled, first)
     actions.splitPane(SESSION, undefined, settled, other)
-    expect(entries()).toBe(before)
-    expect(settled).not.toHaveBeenCalled()
+    expect(dockPaneIds(layout())).toHaveLength(5)
+    expect(settled).toHaveBeenCalledTimes(2)
+    // The bottom pane splits vertically too.
+    const bottom = dockPaneIds(layout()).at(-1)!
+    actions.splitPane(SESSION, bottom, settled, 'column')
+    expect(dockPaneIds(layout())).toHaveLength(6)
+    const beforeUndo = layout()
     actions.undo(SESSION)
-    expect(layout()).toEqual(afterFirst)
+    expect(dockPaneIds(layout())).toHaveLength(5)
     actions.redo(SESSION)
-    expect(layout()).toEqual(combined)
+    expect(layout()).toEqual(beforeUndo)
+    expect(entries()).toBeGreaterThan(0)
+    expect(afterFirst).toBeDefined()
   })
 
-  it('rejects vertical drops and keeps split ratios within twenty to eighty percent', () => {
+  it('keeps vertical drops rejected while horizontal drops split repeatedly, clamping ratios to twenty-eighty', () => {
     const { actions, layout, entries, guide, expand } = harness()
     expand()
     actions.openContent(SESSION, { kind: 'text', contentId: 'file:a', title: 'a' }, () => {})
@@ -180,7 +186,8 @@ describe('createSidebarRightStore — the sequence', () => {
     expect(getSplit(layout(), split).sizes).toEqual([0.8, 0.2])
     const splitCount = entries()
     actions.dropTab(SESSION, guide(), layout().activePaneId, 'right')
-    expect(entries()).toBe(splitCount)
+    expect(entries()).toBe(splitCount + 1)
+    expect(dockPaneIds(layout())).toHaveLength(3)
   })
 
   it('materializes a session empty on open without recording, then seeds the guide with the first expansion', () => {

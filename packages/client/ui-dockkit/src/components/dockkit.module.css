@@ -129,18 +129,18 @@
   min-height: 0;
 }
 
-/* Every tab remains a sibling. Explicit tracks determine placement; order only
-   changes painting, so raising a float never moves a connected DOM ancestor. */
+/* Every tab remains a sibling. Split-tree coordinates change only its position,
+   so moving a pane or raising a float never moves a connected DOM ancestor. */
 .tabLayout {
-  display: grid;
+  position: relative;
   flex: 1 1 auto;
-  grid-template-rows: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
 }
 
 .tabCell,
 .emptyTabHost {
+  position: absolute;
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -151,8 +151,8 @@
   display: none;
 }
 
-/* A zero-sized Grid item supplies a stacking context, not a containing block
-   for its fixed child. Floats share one layer and use Grid paint order within it. */
+/* A zero-sized cell supplies a stacking context, not a containing block
+   for its fixed child. Floats share one layer and use z order within it. */
 .floatingCell {
   width: 0;
   height: 0;
@@ -183,7 +183,13 @@
   min-width: 0;
 }
 
+.tabLayoutSplit {
+  position: absolute;
+  pointer-events: none;
+}
+
 .tabLayoutDivider {
+  position: absolute;
   width: 0;
   cursor: col-resize;
   z-index: calc(var(--dsh-dockkit-dock-layer, 10) + 1);

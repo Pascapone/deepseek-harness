@@ -169,7 +169,7 @@ describe('sidebar focus targets', () => {
     expect(getPane(h.layout(), floating.paneId).tabs).toHaveLength(1)
   })
 
-  it('shares split limits and fullscreen behavior while preserving floating pages', () => {
+  it('shares split availability and fullscreen behavior while preserving floating pages', () => {
     const h = harness()
     const target = h.controller.commandTarget(null)!
     h.room.allowed = false
@@ -181,7 +181,14 @@ describe('sidebar focus targets', () => {
     h.controller.toggleFullscreen(target)
     expect(h.layout().mode).toBe('push')
     h.controller.split(target.paneId)
-    expect(h.controller.splitBlock(target)).toBe('budget')
+    // No budget: geometry blocks only when room is false.
+    expect(h.controller.splitBlock(target)).toBeUndefined()
+    h.controller.split(target.paneId)
+    expect(h.controller.splitBlock(target)).toBeUndefined()
+    h.room.allowed = false
+    expect(h.controller.splitBlock(target)).toBe('width')
+    h.room.allowed = true
+    expect(h.controller.splitBlock(target)).toBeUndefined()
     h.controller.openTab('files')
     const files = h.controller.active()!.id
     h.controller.float(files)
@@ -473,7 +480,10 @@ describe('sidebar keyboard commands', () => {
     releases.push(h.bind())
     const splitNow = split.resolve(context)
     if (splitNow.status === 'handled') splitNow.run()
-    expect(h.controller.splitBlock(h.controller.commandTarget(null)!)).toBe('budget')
+    expect(h.controller.splitBlock(h.controller.commandTarget(null)!)).toBeUndefined()
+    h.room.allowed = false
+    expect(h.controller.splitBlock(h.controller.commandTarget(null)!)).toBe('width')
+    h.room.allowed = true
     h.controller.openTab('files')
     const files = h.controller.active()!.id
     h.controller.float(files)

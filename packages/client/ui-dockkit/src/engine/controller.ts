@@ -143,7 +143,7 @@ export class DockController {
   /**
    * Split a pane to its right and seat the embedder's pane tab in the new pane.
    * @param paneId - pane to split; defaults to the active docked pane.
-   * @returns false when the docked grid is already at `MAX_DOCK_PANES`.
+   * @returns whether a docked pane was split.
    */
   splitPane(paneId?: PaneId): boolean {
     return this.run(planSplitPane(this.state, this.mint, paneId, this.makePaneTab))

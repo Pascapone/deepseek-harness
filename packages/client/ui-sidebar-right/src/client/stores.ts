@@ -71,14 +71,13 @@ export function canCloseTab(surface: SurfaceState, tabId: TabId): boolean {
   return tab !== undefined && !(tab.kind === GUIDE_KIND && soleDockedTab(surface.layout, tabId))
 }
 
-/** A Session has at most one docked split per axis; floats do not spend this limit.
- * @param layout - current Session layout.
- * @param axis - direction of the requested split.
- * @returns whether another split on that axis fits the dock budget.
+/** Existing callers retain their split-policy seam; only measured room limits a split.
+ * @param _layout - current Session layout.
+ * @param _axis - direction of the requested split.
+ * @returns true; the surface and service check each pane's dimensions.
  */
-export function splitAllowed(layout: LayoutState, axis: SplitAxis): boolean {
-  return dockPaneIds(layout).length < 3
-    && !Object.values(layout.nodes).some(node => node.kind === 'split' && node.axis === axis)
+export function splitAllowed(_layout: LayoutState, _axis: SplitAxis): boolean {
+  return true
 }
 
 /** Build the currently selected default tab. */

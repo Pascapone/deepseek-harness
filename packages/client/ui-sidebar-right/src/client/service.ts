@@ -219,11 +219,11 @@ export interface ISidebarRight {
   focus(tabId: TabId): void
   /**
    * Split a docked pane to the right or below and seed the new pane, under the
-   * same per-axis limit and room rule as the strip controls. Recorded when split.
+   * same per-pane room rule as the strip controls. Recorded when split.
    * @param paneId - the pane to split; defaults to the active docked pane.
    * @param axis - row splits left/right, column splits top/bottom; defaults to row.
    * @returns the new pane's id, or `undefined` when nothing was split: the pane
-   *   is missing, floating, or empty, the budget is spent, or two halves would not fit.
+   *   is missing, floating, empty, or too small for two halves.
    */
   split(paneId?: PaneId, axis?: SplitAxis): PaneId | undefined
   /**
@@ -636,7 +636,7 @@ export class SidebarRightController implements ISidebarRight {
   }
 
   /**
-   * Explain the same geometry and pane-budget rule used by the split control.
+   * Explain the same per-pane room rule used by the split control.
    * @param target - captured command or button target.
    * @returns a localizable block discriminator, or undefined when splitting is available.
    */
@@ -665,7 +665,7 @@ export class SidebarRightController implements ISidebarRight {
   }
 
   /**
-   * Split a docked pane to its right when the budget and the room rule allow.
+   * Split a docked pane to its right or below when that pane has room.
    * @param paneId - the pane to split; defaults to the active docked pane.
    * @returns the new pane's id, or `undefined` when nothing was split.
    */

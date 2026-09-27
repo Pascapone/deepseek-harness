@@ -192,7 +192,7 @@ describe('SidebarRightController — opening', () => {
     expect(findTabPane(layout(), tabOf('a.txt')).id).toBe(left)
   })
 
-  it('opens new content alone in a preferred pane and falls back to the current pane at the limit', () => {
+  it('opens new content alone in a preferred pane, splitting again past two panes', () => {
     const { controller, publish, layout, tabOf, entries, expand } = harness()
     expand()
     publish()
@@ -206,8 +206,10 @@ describe('SidebarRightController — opening', () => {
 
     publish()
     controller.openResource('dsh-resource://file/session/s-test/b.txt', { preferNewPane: true })
-    expect(dockPaneIds(layout())).toHaveLength(2)
-    expect(findTabPane(layout(), tabOf('b.txt')).id).toBe(pane.id)
+    const b = tabOf('b.txt')
+    expect(dockPaneIds(layout())).toHaveLength(3)
+    expect(findTabPane(layout(), b).tabs).toEqual([b])
+    expect(findTabPane(layout(), b).id).not.toBe(pane.id)
   })
 
   it('falls back when the pane is too narrow and reveals existing content without splitting', () => {
@@ -472,7 +474,7 @@ describe('SidebarRightController — layout operations', () => {
     expect(controller.split()).toBeUndefined()
   })
 
-  it('splits the active docked pane and names the new one, or nothing when the budget or the room rule says no', () => {
+  it('splits the active docked pane repeatedly, blocked only by the room rule or a floating pane', () => {
     const { controller, instance, publish, layout, entries, room, expand } = harness()
     instance.actions.open(SESSION)
     expand()
@@ -495,12 +497,13 @@ describe('SidebarRightController — layout operations', () => {
     publish()
     const [float] = layout().floats
     expect(controller.split(float)).toBeUndefined()
-    // The budget: split to two panes, then no more.
-    while (dockPaneIds(layout()).length < 2) {
+    // No budget: splitting past two panes keeps working, on either axis.
+    for (let index = 0; index < 3; index += 1) {
       expect(controller.split(dockPaneIds(layout()).at(-1))).toBeDefined()
       publish()
     }
-    expect(controller.split()).toBeUndefined()
+    expect(dockPaneIds(layout()).length).toBeGreaterThanOrEqual(4)
+    expect(controller.split(undefined, 'column')).toBeDefined()
   })
 
   it('floats a docked tab, and leaves a floating or missing tab alone', () => {

@@ -15,7 +15,7 @@
 import type {
   DockMode, DockZone, FloatRect, LayoutOp, LayoutState, PaneId, PaneNode, SplitAxis, SplitId, TabId, TabRecord,
 } from '../contract/types.ts'
-import { canSplit, clampSizes, FLOAT_DEFAULT_SIZE, zoneSplit } from './constraints.ts'
+import { clampSizes, FLOAT_DEFAULT_SIZE, zoneSplit } from './constraints.ts'
 import type { TabFactory } from './initial.ts'
 import { applyOp } from './operations.ts'
 import { dockPaneIds, findTabPane, firstDockPaneId, getNode, getPane, getTab } from './tree.ts'
@@ -135,7 +135,7 @@ export function planSetMode(state: LayoutState, mode: DockMode): readonly Layout
  * @param paneId - pane to split; defaults to the active docked pane.
  * @param makePaneTab - builds the seeded tab; omit to leave the new pane empty.
  * @param axis - the direction of the split; defaults to left/right.
- * @returns the operations, or none when the pane budget is spent.
+ * @returns the operations, or none when the pane is floating.
  */
 export function planSplitPane(
   state: LayoutState,
@@ -144,7 +144,6 @@ export function planSplitPane(
   makePaneTab?: TabFactory,
   axis: SplitAxis = 'row',
 ): readonly LayoutOp[] {
-  if (!canSplit(state)) return NOTHING
   const target = paneId ?? activeDockPaneId(state)
   if (getPane(state, target).host !== 'dock') return NOTHING
   const newPaneId = mint('pane')
@@ -289,7 +288,6 @@ export function planDropTab(
 
   const vacates = source.id === targetPaneId && source.tabs.length === 1
   if (vacates && makeTab === undefined) return NOTHING
-  if (!canSplit(state)) return NOTHING
   const newPaneId = mint('pane')
   const ops: LayoutOp[] = [{
     type: 'split',

@@ -728,7 +728,7 @@ describe('slot-owned useTabInfo', () => {
     expect(document.querySelector('[data-dockkit-tab-menu]')).toBeNull()
   })
 
-  it('renders plugin pane actions before the split and disables the used axis', async () => {
+  it('renders plugin pane actions before the split and keeps both axes available', async () => {
     const h = await mountSeat()
     h.open()
     let release = () => {}
@@ -744,14 +744,20 @@ describe('slot-owned useTabInfo', () => {
     fireEvent.click(button)
     expect(h.layout().nodes[h.layout().rootId]).toHaveProperty('axis', 'column')
     expect(h.view.container.querySelectorAll('[data-column-split]')).toHaveLength(2)
-    expect(element(h.view.container, '[data-column-split]').hasAttribute('disabled')).toBe(true)
-    act(() => { h.controller.split(undefined, 'row') })
+    // No axis budget: the column action stays enabled and splits again.
+    expect(element(h.view.container, '[data-column-split]').hasAttribute('disabled')).toBe(false)
+    fireEvent.click(element(h.view.container, '[data-column-split]'))
     expect(dockPaneIds(h.layout())).toHaveLength(3)
+    act(() => { h.controller.split(undefined, 'row') })
+    expect(dockPaneIds(h.layout())).toHaveLength(4)
+    const bottom = dockPaneIds(h.layout()).at(-1)!
+    act(() => { h.controller.split(bottom, 'column') })
+    expect(dockPaneIds(h.layout())).toHaveLength(5)
     await act(async () => { release() })
     expect(h.view.container.querySelector('[data-column-split]')).toBeNull()
   })
 
-  it('keeps the current binding in the disabled split tooltip when it changes or is cleared', async () => {
+  it('keeps the current binding in the split tooltip when it changes or is cleared', async () => {
     const h = await mountSeat()
     const split: ShortcutCatalogEntry = {
       id: 'pane.split' as ShortcutCommandId, label: 'Split', aliases: [],
@@ -763,15 +769,18 @@ describe('slot-owned useTabInfo', () => {
       h.catalog.set([split])
       h.controller.toggleExpanded()
       h.controller.split()
+      h.controller.split()
     })
+    expect(dockPaneIds(h.layout())).toHaveLength(3)
+    expect(element(h.view.container, '[data-dockkit-split-button]').hasAttribute('disabled')).toBe(false)
     const anchor = element(h.view.container, '[data-dockkit-split-button]').parentElement!
     fireEvent.focus(anchor)
-    expect(document.querySelector('[role="tooltip"]')?.getAttribute('aria-label')).toBe('One vertical split is the limit ⌘ \\')
+    expect(document.querySelector('[role="tooltip"]')?.getAttribute('aria-label')).toBe('Split ⌘ \\')
     act(() => { h.catalog.set([{ ...split, binding: { code: 'KeyG', modifiers: ['control'] },
       keys: ['Ctrl', '+', 'G'], aria: 'Control+G' }]) })
-    expect(document.querySelector('[role="tooltip"]')?.getAttribute('aria-label')).toBe('One vertical split is the limit Ctrl + G')
+    expect(document.querySelector('[role="tooltip"]')?.getAttribute('aria-label')).toBe('Split Ctrl + G')
     act(() => { h.catalog.set([{ ...split, binding: null, keys: [], aria: undefined }]) })
-    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('One vertical split is the limit')
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('Split')
   })
 
   it('advertises configured pane and page-close controls', async () => {
@@ -788,7 +797,7 @@ describe('slot-owned useTabInfo', () => {
     }
   })
 
-  it('explains the two-pane limit and adds a guide only to a pane without one', async () => {
+  it('keeps splitting past two panes and adds a guide only to a pane without one', async () => {
     const h = await mountSeat()
     // Expanding first seeds the left pane's guide; only the right pane will lack one.
     act(() => { h.controller.toggleExpanded() })
@@ -797,11 +806,10 @@ describe('slot-owned useTabInfo', () => {
     expect(splitButtons()).toHaveLength(1)
     act(() => { h.controller.split() })
     expect(dockPaneIds(h.layout())).toHaveLength(2)
-    const stored = h.instance.getSnapshot()
-    act(() => { expect(h.controller.split()).toBeUndefined() })
-    expect(h.instance.getSnapshot()).toBe(stored)
-    expect(splitButtons()).toHaveLength(2)
-    expect([...splitButtons()].every(button => button.hasAttribute('disabled'))).toBe(true)
+    act(() => { expect(h.controller.split()).toBeDefined() })
+    expect(dockPaneIds(h.layout())).toHaveLength(3)
+    expect(splitButtons()).toHaveLength(3)
+    expect([...splitButtons()].every(button => !button.hasAttribute('disabled'))).toBe(true)
     const right = dockPaneIds(h.layout())[1]!
     h.open('right.txt', { paneId: right })
     const guide = getPane(h.layout(), right).tabs.find(id => h.layout().tabs[id]?.kind === 'guide')!
@@ -812,8 +820,8 @@ describe('slot-owned useTabInfo', () => {
     expect(getPane(h.layout(), right).tabs.filter(id => h.layout().tabs[id]?.kind === 'guide')).toHaveLength(1)
     const closing = [...getPane(h.layout(), right).tabs]
     act(() => { for (const tabId of closing) h.actions.closeTab(SESSION, tabId) })
-    expect(dockPaneIds(h.layout())).toHaveLength(1)
-    expect(splitButtons()).toHaveLength(1)
+    expect(dockPaneIds(h.layout())).toHaveLength(2)
+    expect(splitButtons()).toHaveLength(2)
     expect(splitButtons()[0]?.disabled).toBe(false)
   })
 })

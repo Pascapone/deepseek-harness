@@ -37,15 +37,6 @@ it.each([
   ['split cycle', { minted: 4, layout: { ...splitLayout, nodes: { ...splitLayout.nodes, split3: { ...split, children: ['split3', 'pane1'] } } } }],
   ['invalid split sum', { minted: 4, layout: { ...splitLayout, nodes: { ...splitLayout.nodes, split3: { ...split, sizes: [0.4, 0.4] } } } }],
   ['mismatched split sizes', { minted: 4, layout: { ...splitLayout, nodes: { ...splitLayout.nodes, split3: { ...split, sizes: [0.2, 0.3, 0.5] } } } }],
-  ['three docked panes', { minted: 5, layout: { ...splitLayout, nodes: {
-    ...splitLayout.nodes, pane5: { ...otherPane, id: 'pane5' },
-    split3: { ...split, children: ['pane1', 'pane4', 'pane5'], sizes: [0.3, 0.3, 0.4] },
-  } } }],
-  ['duplicate axis split', { minted: 6, layout: { ...splitLayout, nodes: {
-    ...splitLayout.nodes, pane6: { ...otherPane, id: 'pane6' },
-    split3: { ...split, children: ['pane1', 'split5'] },
-    split5: { ...split, id: 'split5', children: ['pane4', 'pane6'] },
-  } } }],
   ['split as active pane', { minted: 4, layout: { ...splitLayout, activePaneId: 'split3' } }],
   ['floating split', { minted: 4, layout: { ...splitLayout, floats: ['split3'] } }],
   ['float without rectangle', { minted: 3, layout: { ...empty.layout, tabs: { tab2: tab }, floats: ['float3'], nodes: { ...empty.layout.nodes, float3: { ...pane, id: 'float3', host: 'float' } } } }],
@@ -64,6 +55,25 @@ it.each(['row', 'column'] as const)('restores a %s split with one nested orthogo
   const saved = { minted: 6, layout: { ...splitLayout, nodes: { ...splitLayout.nodes,
     split3: { ...split, axis, children: ['pane1', 'split5'] }, split5: nested,
     pane6: { ...otherPane, id: 'pane6' },
+  } } }
+  localStorage.setItem(key, JSON.stringify({ bySession: { [session]: saved } }))
+  expect(readSidebarLayout(session)?.layout.nodes).toEqual(JSON.parse(JSON.stringify(saved.layout.nodes)))
+})
+
+it('restores three docked panes in one split', () => {
+  const saved = { minted: 5, layout: { ...splitLayout, nodes: {
+    ...splitLayout.nodes, pane5: { ...otherPane, id: 'pane5' },
+    split3: { ...split, children: ['pane1', 'pane4', 'pane5'], sizes: [0.3, 0.3, 0.4] },
+  } } }
+  localStorage.setItem(key, JSON.stringify({ bySession: { [session]: saved } }))
+  expect(readSidebarLayout(session)?.layout.nodes).toEqual(JSON.parse(JSON.stringify(saved.layout.nodes)))
+})
+
+it.each(['row', 'column'] as const)('restores a %s split with a nested repeated axis', (axis) => {
+  const saved = { minted: 6, layout: { ...splitLayout, nodes: {
+    ...splitLayout.nodes, pane6: { ...otherPane, id: 'pane6' },
+    split3: { ...split, axis, children: ['pane1', 'split5'] },
+    split5: { ...split, id: 'split5', axis, children: ['pane4', 'pane6'] },
   } } }
   localStorage.setItem(key, JSON.stringify({ bySession: { [session]: saved } }))
   expect(readSidebarLayout(session)?.layout.nodes).toEqual(JSON.parse(JSON.stringify(saved.layout.nodes)))

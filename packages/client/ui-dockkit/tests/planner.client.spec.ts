@@ -72,21 +72,29 @@ describe('planner determinism', () => {
     expect(planDropTab(state, mint, tabId, getPane(state, state.rootId).id, 'center')).toEqual([])
   })
 
-  it('refuses to plan past the pane budget', () => {
+  it('plans splits and edge drops past four panes on either axis', () => {
     const seeded = seededState()
     let { state } = seeded
     const { minter } = seeded
     const mint = minter.next
-    for (let index = 0; index < 3; index += 1) {
-      state = applyAll(state, planSplitPane(state, mint, state.activePaneId, seedTab))
+    for (let index = 0; index < 5; index += 1) {
+      const axis = index % 2 === 0 ? 'row' : 'column'
+      const planned = planSplitPane(state, mint, state.activePaneId, seedTab, axis)
+      expect(planned.length).toBeGreaterThan(0)
+      state = applyAll(state, planned)
     }
-    expect(planSplitPane(state, mint, state.activePaneId, seedTab)).toEqual([])
-    // The root is a split once panes exist, so address a real pane.
-    const firstPane = dockPaneIds(state)[0]
-    if (firstPane === undefined) throw new Error('fixture: no docked pane')
+    expect(dockPaneIds(state)).toHaveLength(6)
+    expect(planSplitPane(state, mint, state.activePaneId, seedTab).length).toBeGreaterThan(0)
+    // Cross-pane edge drops still plan a split past the old budget.
+    const [firstPane, secondPane] = dockPaneIds(state)
+    if (firstPane === undefined || secondPane === undefined) throw new Error('fixture: no docked panes')
     const tabId = getPane(state, firstPane).tabs[0]
     if (tabId === undefined) throw new Error('fixture: seeded tab missing')
-    expect(planDropTab(state, mint, tabId, firstPane, 'right')).toEqual([])
+    expect(planDropTab(state, mint, tabId, secondPane, 'right').map(op => op.type)).toContain('split')
+    // The bottom pane splits vertically too.
+    const bottomPane = dockPaneIds(state).at(-1)
+    if (bottomPane === undefined) throw new Error('fixture: no bottom pane')
+    expect(planSplitPane(state, mint, bottomPane, seedTab, 'column').length).toBeGreaterThan(0)
   })
 })
 
@@ -232,6 +240,23 @@ describe('planSettle', () => {
     const ops = planSettle(emptied, mint, seedTab)
     expect(ops.map(op => op.type)).toEqual(['merge', 'merge'])
     expect(dockPaneIds(applyAll(emptied, ops))).toEqual([left])
+  })
+
+  it('collapses an emptied nested branch into its surviving sibling', () => {
+    const { state, mint, right } = twoPanes()
+    const nested = applyAll(state, planSplitPane(state, mint, right, seedTab, 'column'))
+    const panes = dockPaneIds(nested)
+    expect(panes).toHaveLength(3)
+    const leaf = panes.at(-1)
+    if (leaf === undefined) throw new Error('fixture: expected a nested leaf')
+    const tabId = getPane(nested, leaf).tabs[0]
+    if (tabId === undefined) throw new Error('fixture: seeded tab missing')
+    const emptied = applyAll(nested, [{ type: 'closeTab', tabId }])
+    const ops = planSettle(emptied, mint, seedTab)
+    expect(ops.map(op => op.type)).toEqual(['merge'])
+    const settled = applyAll(emptied, ops)
+    expect(dockPaneIds(settled)).toHaveLength(2)
+    expect(getSplit(settled, settled.rootId).axis).toBe('row')
   })
 
   it('reseeds an emptied root pane through the factory, and leaves it empty without one', () => {
