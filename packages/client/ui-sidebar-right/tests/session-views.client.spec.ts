@@ -59,6 +59,7 @@ it('keeps one reference per View until the final committed root of a retired Vie
 })
 
 it('retires only unselected Views without retained bodies and rejects released reference identities', async () => {
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {})
   const r = await runtime()
   const views = new SidebarSessionViews(r.sessions)
   owners.push(views)
@@ -75,6 +76,7 @@ it('retires only unselected Views without retained bodies and rejects released r
   expect(views.source.getSnapshot().map(view => [view.sessionId, view.selected])).toEqual([[A, false], [B, true]])
   lifetime.abort()
   expect(views.source.getSnapshot().map(view => view.sessionId)).toEqual([B])
+  const b = views.source.getSnapshot()[0]!
   expect(release).not.toHaveBeenCalled()
   unmount()
   expect(release).toHaveBeenCalledOnce()
@@ -85,6 +87,8 @@ it('retires only unselected Views without retained bodies and rejects released r
   views.select(A)
   views.mount(a.reference)()
   expect(views.source.getSnapshot()).toEqual([])
+  await Promise.allSettled([a.reference.ready, b.reference.ready])
+  expect(error).not.toHaveBeenCalled()
 })
 
 it('reports opening failure and releases Views even when committed roots are still present', async () => {

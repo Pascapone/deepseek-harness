@@ -4,6 +4,7 @@ import { Service } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import z from '@deepseek-ai/schemastery'
+import type {} from '@deepseek-ai/dsh-api-gateway'
 import { snapshotJsonValue, type JsonValue } from '@deepseek-ai/dsh-util-values'
 import { assertSupportedJsonSchema, validateJsonSchemaValue } from '@deepseek-ai/dsh-tools'
 import type { JsonSchemaNode } from '@deepseek-ai/dsh-tools'
@@ -32,7 +33,7 @@ export interface HostCordisInspectProviderRegistration {
 /** Bounds for cross-page inspect queries, in milliseconds. */
 export interface InspectConfig {
   /** Hard deadline for a Client query, including any error grace period. */
-  inspectQueryTimeoutMs?: number
+  clientInspectTimeoutMs?: number
   /** Non-resetting grace after the first page failure for another page to succeed. */
   inspectQueryErrorGraceMs?: number
 }
@@ -54,7 +55,7 @@ declare module '@deepseek-ai/cordis' {
 /** Registry and cross-page router behind the two model-facing inspect tools. */
 export class CordisInspectRegistryService extends Service {
   static Config: z<InspectConfig> = z.object({
-    inspectQueryTimeoutMs: z.number().step(1).min(1).max(2_147_483_647).default(30_000),
+    clientInspectTimeoutMs: z.number().step(1).min(1).max(2_147_483_647).default(10_000),
     inspectQueryErrorGraceMs: z.number().step(1).min(0).max(2_147_483_647).default(250),
   })
 
@@ -64,7 +65,11 @@ export class CordisInspectRegistryService extends Service {
   private clientManifest: readonly CordisInspectProviderManifest[] | undefined
   private nextRequest = 1
 
-  /** Register the process-global Host registry. */
+  /**
+   * Register the process-global Host registry.
+   * @param ctx - owning Host context.
+   * @param config - Client response deadline and non-resetting failure grace.
+   */
   constructor(ctx: Context, config: InspectConfig = {}) {
     super(ctx, 'cordisInspect')
     this.config = CordisInspectRegistryService.Config(config) as Required<InspectConfig>
@@ -72,7 +77,7 @@ export class CordisInspectRegistryService extends Service {
       for (const pending of this.pending.values()) {
         pending.settle({ ok: false, reason: 'cancelled', message: 'Client inspect registry was disposed' })
       }
-    }, 'cordisInspect: pending queries')
+    }, 'cordis-inspect: pending queries')
   }
 
   /**
@@ -124,8 +129,8 @@ export class CordisInspectRegistryService extends Service {
    * @param input - optional lossless JSON input.
    * @param agent - requesting Agent and scope.
    * @param signal - tool-call cancellation.
-   * @returns provider JSON data; Client queries reject on cancellation, deadline,
-   * or the first failure after its grace period unless a valid response wins.
+   * @returns provider JSON data; Client queries fail fast with no live Gateway Client,
+   * and reject on cancellation, deadline, or the first failure after its grace period.
    */
   async query(
     platform: CordisInspectPlatform,
@@ -153,7 +158,7 @@ export class CordisInspectRegistryService extends Service {
    * @param agent - Agent whose Session owns the query.
    * @param requestId - Pending Client query identity.
    * @param resolution - Client provider result or failure.
-   * @returns whether this response settled the still-pending query.
+   * @returns acknowledgement with accepted true only for a success that settles the query; only the first failure diagnostic is retained.
    */
   resolveClientQuery(
     agent: Agent,
@@ -191,6 +196,10 @@ export class CordisInspectRegistryService extends Service {
     const method = findMethod(provider, methodName)
     validateInput('Client', providerId, method, input)
     signal.throwIfAborted()
+    const gateway = this.ctx.get('typertGateway')
+    if (gateway !== undefined && !gateway.hasLiveClient()) {
+      throw new Error(`Client inspect query ${providerId}.${methodName} has no connected Harness page. Open or reconnect the Harness page, then retry.`)
+    }
     const requestId = `inspect-${this.nextRequest++}` as CordisInspectRequestId
     const request: CordisInspectQueryRequest = {
       requestId,
@@ -219,9 +228,9 @@ export class CordisInspectRegistryService extends Service {
         settle(firstFailure ?? {
           ok: false,
           reason: 'provider-error',
-          message: `Client inspect query timed out after ${this.config.inspectQueryTimeoutMs}ms; no valid page response. Check that a connected page has this provider, then retry.`,
+          message: `Client inspect query timed out after ${this.config.clientInspectTimeoutMs}ms; no valid page response. Check that a connected page has this provider, then retry.`,
         })
-      }, this.config.inspectQueryTimeoutMs)
+      }, this.config.clientInspectTimeoutMs)
       this.pending.set(requestId, {
         request, method, settle,
         fail: (resolution) => {

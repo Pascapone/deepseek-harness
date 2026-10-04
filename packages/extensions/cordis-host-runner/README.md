@@ -38,13 +38,17 @@ Mount this plugin for the inspection registry or programmatic dynamic-package li
 | Field | Default | Meaning |
 |---|---|---|
 | `vmTimeoutMs` | `5000` | Milliseconds the synchronous portion of a host half may run in the vm before evaluation is aborted |
+| `clientInspectTimeoutMs` | `10000` | Maximum wait for a valid Client inspect response; an integer from 1 to 2147483647 milliseconds |
+| `inspectQueryErrorGraceMs` | `250` | Non-resetting grace after the first page failure; an integer from 0 to 2147483647 milliseconds |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-cordis-host-runner) is the exhaustive source for every accepted field.
 
 <a id="client-inspect-queries"></a>
 ### Client inspect queries
 
-Client queries accept the first schema-valid result for the requesting Agent. The hard deadline is `inspectQueryTimeoutMs` (default `30000`). The first page failure, including invalid output, starts a non-resetting `inspectQueryErrorGraceMs` grace (default `250`); another page can succeed before grace or deadline ends. Otherwise the first failure is returned, preserving diagnostics such as `no catalogued Service named "sidebarRight"`; silence produces a timeout with a reconnect/retry hint. Unknown providers or methods in the Host's mirrored manifest fail immediately. Both settings are integer milliseconds bounded by `2147483647`; the deadline must be positive and grace may be zero. Settlement clears pending state, timers, and the abort listener and broadcasts cancellation to other pages. Tool cancellation and registry disposal settle immediately. These bounds do not apply to Host provider execution or human-approved dynamic runs.
+When Gateway is mounted, a Client query with no live event stream fails before dispatch. Dispatched queries keep their deadline after disconnect; reconnecting does not replay missed requests.
+
+Client queries accept the first schema-valid result for the requesting Agent. The hard deadline is `clientInspectTimeoutMs` (default `10000`). The first page failure, including invalid output, starts a non-resetting `inspectQueryErrorGraceMs` grace (default `250`); another page can succeed before grace or deadline ends. Otherwise the first failure is returned, preserving diagnostics such as `no catalogued Service named "sidebarRight"`; silence produces a timeout with a reconnect/retry hint. Unknown providers or methods in the Host's mirrored manifest fail immediately. Both settings are integer milliseconds bounded by `2147483647`; the deadline must be positive and grace may be zero. Settlement clears pending state, timers, and the abort listener and broadcasts cancellation to other pages. Tool cancellation and registry disposal settle immediately. These bounds do not apply to Host provider execution or human-approved dynamic runs.
 
 ### What a run does
 
@@ -56,7 +60,7 @@ Definitions are session-scoped and process-local: other sessions read them as ab
 
 ### Trust stance
 
-The sandbox isolates globals but is not a security boundary: Node globals are absent or redirect to Cordis services (`ctx.fs`, `ctx.web`, `ctx.bash`, the timer helpers), and a host half receives a façade without framework internals, yet the services it declares reach the live runtime. Treat a dynamic package like bash access — see the [self-referential toolset Agent Note](../../../.agents/notes/implemented/feature/2026-07-08-self-referential-cordis-toolset.md).
+The sandbox isolates globals but is not a security boundary: Node globals are absent or redirect to Cordis services (`ctx.fs`, `ctx.web`, `ctx.bash`, the timer helpers), and a host half receives a façade without framework internals, yet the services it declares reach the live runtime. Treat a dynamic package like bash access — see the [self-referential toolset reference](README.md).
 
 -----
 
@@ -102,7 +106,7 @@ Read these pages when the package-level contract is not enough. They move from t
 - [UI package](../ui-cordis/README.md) — the panel users approve and operate runs with.
 - [Generated configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-cordis-host-runner) — every accepted config field.
 - [Extensions subsystem](../../../docs/subsystems/extensions.md) — the generated `ctx.cordisInspect` and `ctx.dynamicCordisRunner` API and `cordis/*` events.
-- [Self-referential Cordis toolset Agent Note](../../../.agents/notes/implemented/feature/2026-07-08-self-referential-cordis-toolset.md) — sandbox semantics, lifecycle, and composition rationale.
+- [historical Self-referential Cordis toolset Agent Note](../../../.agents/notes/archived/feature/2026-07-08-self-referential-cordis-toolset.md) — sandbox semantics, lifecycle, and composition rationale.
 
 -----
 
@@ -147,5 +151,3 @@ These limits define when the runner needs special care. They are current package
 None.
 
 </details>
-
-**Runtime invariant:** No companion is published. The definition registry is process memory with no event stream to observe, and its one owned relation (a running definition owns a settled host-half fiber and its handler table) is established and unwound inside single awaited verbs, so package tests assert it directly.

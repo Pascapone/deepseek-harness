@@ -276,7 +276,7 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
       }
 
       if (lw > 0) x = Math.min(Math.max(x, MARGIN), vw - lw - MARGIN)
-      if (lh > 0) y = Math.min(Math.max(y, overlayTopMargin(MARGIN)), vh - lh - MARGIN)
+      if (lh > 0) y = Math.min(Math.max(y, overlayTopMargin(MARGIN, portalDocument)), vh - lh - MARGIN)
 
       setFixedPos(current => current?.left === x && current.top === y ? current : { left: x, top: y })
     }

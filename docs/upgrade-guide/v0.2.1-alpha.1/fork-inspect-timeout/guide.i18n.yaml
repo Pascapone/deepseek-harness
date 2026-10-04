@@ -1,0 +1,16 @@
+# Bilingual-pair consistency record for guide.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/upgrade-guide/v0.2.1-alpha.1/fork-inspect-timeout/guide.md
+/:
+  en: e8054d2dbacf2241
+  zh: d3718da8b566c595
+/client-inspect-timeout-configuration:
+  en: 2bb0268fbe5ff828
+  zh: 8688d3043c93518b
+/client-inspect-timeout-configuration/change:
+  en: 0701205295deef64
+  zh: aa532d81c8e6f92d
+/client-inspect-timeout-configuration/migration:
+  en: 35d20b7ec6918693
+  zh: bdcb1f2fd379b26a

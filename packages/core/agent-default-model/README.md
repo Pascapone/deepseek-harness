@@ -77,7 +77,6 @@ The service retains its validated Config references and samples them in `current
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | Live default selection and profile-backed writes |
-| — | No invariant companion is published because Config references and scoped registrations have no independently cached selection. |
 
 ### Behavior notes
 
@@ -115,7 +114,7 @@ Changing the default affects only agents that subsequently resolve from it. An e
 
 These limits define the service's scope. They are current package constraints, not a task backlog.
 
-- **One process-wide default** — the service owns a single default; per-session model selection remains the entry point's responsibility.
+- **Session selection remains caller-owned** — scoped defaults and the deployment fallback do not replace an explicit or recorded session selection.
 - **Persistence requires a profile configuration editor** — without it, saving a default does not retain the selection.
 
 <a id="dev-note"></a>

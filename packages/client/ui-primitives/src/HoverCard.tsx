@@ -4,6 +4,7 @@ import clsx from 'clsx'
 import { createPortal } from 'react-dom'
 import { writeClipboard } from './clipboard.ts'
 import { usePointerGrace } from './pointer-grace.ts'
+import { usePortalDocument } from './PortalDocument.tsx'
 import { overlayTopMargin } from './overlay-top-margin.ts'
 import { TooltipSuppression } from './Tooltip.tsx'
 import css from './HoverCard.module.css'
@@ -50,6 +51,8 @@ export function HoverCard({
   copyLabel?: string
   copiedLabel?: string
 })) {
+  const portalDocument = usePortalDocument()
+  const portalWindow = portalDocument.defaultView ?? window
   const rootRef = useRef<HTMLSpanElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -126,9 +129,9 @@ export function HoverCard({
       cancelClose()
       close()
     }
-    window.addEventListener('keydown', dismiss, inline)
-    return () => { window.removeEventListener('keydown', dismiss, inline) }
-  }, [open, variant, inline, cancelClose, close])
+    portalWindow.addEventListener('keydown', dismiss, inline)
+    return () => { portalWindow.removeEventListener('keydown', dismiss, inline) }
+  }, [open, variant, inline, cancelClose, close, portalWindow])
 
   // Fixed-position from the anchor rect before paint; track the anchor while
   // open (capture-phase scroll catches nested panes), as in Menu portal mode.
@@ -142,15 +145,15 @@ export function HoverCard({
       const h = cardRef.current?.offsetHeight ?? 0
       if (variant === 'preview') {
         const bounds = widthAnchorRef?.current?.getBoundingClientRect() ?? r
-        const width = Math.max(0, Math.min(bounds.width - PREVIEW_INSET * 2, window.innerWidth - VIEWPORT_MARGIN * 2))
-        const topMargin = overlayTopMargin(VIEWPORT_MARGIN)
+        const width = Math.max(0, Math.min(bounds.width - PREVIEW_INSET * 2, portalWindow.innerWidth - VIEWPORT_MARGIN * 2))
+        const topMargin = overlayTopMargin(VIEWPORT_MARGIN, portalDocument)
         const belowTop = Math.max(topMargin, r.bottom + ANCHOR_GAP)
         const above = Math.max(0, r.top - ANCHOR_GAP - topMargin)
-        const below = Math.max(0, window.innerHeight - belowTop - VIEWPORT_MARGIN)
+        const below = Math.max(0, portalWindow.innerHeight - belowTop - VIEWPORT_MARGIN)
         const onTop = above >= Math.min(PREVIEW_MAX_HEIGHT, below)
         const maxHeight = Math.min(PREVIEW_MAX_HEIGHT, onTop ? above : below)
         setPos({
-          left: Math.max(VIEWPORT_MARGIN, Math.min(bounds.left + PREVIEW_INSET, window.innerWidth - width - VIEWPORT_MARGIN)),
+          left: Math.max(VIEWPORT_MARGIN, Math.min(bounds.left + PREVIEW_INSET, portalWindow.innerWidth - width - VIEWPORT_MARGIN)),
           top: onTop ? Math.max(topMargin, r.top - Math.min(h, maxHeight) - ANCHOR_GAP) : belowTop,
           width, maxHeight,
         })
@@ -158,21 +161,21 @@ export function HoverCard({
       }
       if (inline) {
         const height = Math.max(h, cardRef.current?.scrollHeight ?? 0)
-        const width = Math.max(0, Math.min(INLINE_PREVIEW_WIDTH, window.innerWidth - VIEWPORT_MARGIN * 2))
-        const topMargin = overlayTopMargin(VIEWPORT_MARGIN)
+        const width = Math.max(0, Math.min(INLINE_PREVIEW_WIDTH, portalWindow.innerWidth - VIEWPORT_MARGIN * 2))
+        const topMargin = overlayTopMargin(VIEWPORT_MARGIN, portalDocument)
         const belowTop = Math.max(topMargin, r.bottom + ANCHOR_GAP)
         const above = Math.max(0, r.top - ANCHOR_GAP - topMargin)
-        const below = Math.max(0, window.innerHeight - belowTop - VIEWPORT_MARGIN)
+        const below = Math.max(0, portalWindow.innerHeight - belowTop - VIEWPORT_MARGIN)
         const onTop = height > below && above > below
         const maxHeight = onTop ? above : below
         setPos({
-          left: Math.max(VIEWPORT_MARGIN, Math.min(r.left, window.innerWidth - width - VIEWPORT_MARGIN)),
+          left: Math.max(VIEWPORT_MARGIN, Math.min(r.left, portalWindow.innerWidth - width - VIEWPORT_MARGIN)),
           top: onTop ? r.top - ANCHOR_GAP - Math.min(height, maxHeight) : belowTop,
           width, maxHeight,
         })
         return
       }
-      const top = r.top + h > window.innerHeight - VIEWPORT_MARGIN ? window.innerHeight - h - VIEWPORT_MARGIN : r.top
+      const top = r.top + h > portalWindow.innerHeight - VIEWPORT_MARGIN ? portalWindow.innerHeight - h - VIEWPORT_MARGIN : r.top
       setPos({ left: r.right + ANCHOR_GAP, top })
     }
     place()
@@ -180,14 +183,14 @@ export function HoverCard({
     for (const element of [cardRef.current, rootRef.current, widthAnchorRef?.current]) {
       if (element !== null && element !== undefined) observer?.observe(element)
     }
-    window.addEventListener('scroll', place, true)
-    window.addEventListener('resize', place)
+    portalWindow.addEventListener('scroll', place, true)
+    portalWindow.addEventListener('resize', place)
     return () => {
       observer?.disconnect()
-      window.removeEventListener('scroll', place, true)
-      window.removeEventListener('resize', place)
+      portalWindow.removeEventListener('scroll', place, true)
+      portalWindow.removeEventListener('resize', place)
     }
-  }, [open, variant, widthAnchorRef, positioned, inline])
+  }, [open, variant, widthAnchorRef, positioned, inline, portalDocument, portalWindow])
 
   // The first placement ran before the card mounted (height read 0): once the
   // card's real height is measurable, correct the bottom-edge clamp. The
@@ -196,10 +199,10 @@ export function HoverCard({
     if (!open || pos === null || variant === 'preview' || inline || suppressed) return
     /* v8 ignore next -- the card is mounted whenever pos is set, so the ref is attached here. */
     const h = cardRef.current?.offsetHeight ?? 0
-    if (pos.top + h > window.innerHeight - VIEWPORT_MARGIN) {
-      setPos({ left: pos.left, top: window.innerHeight - h - VIEWPORT_MARGIN })
+    if (pos.top + h > portalWindow.innerHeight - VIEWPORT_MARGIN) {
+      setPos({ left: pos.left, top: portalWindow.innerHeight - h - VIEWPORT_MARGIN })
     }
-  }, [open, pos, variant, inline, suppressed])
+  }, [open, pos, variant, inline, suppressed, portalWindow])
 
   const copy = async (text: string): Promise<void> => {
     if (copied || copyingRef.current) return
@@ -237,7 +240,7 @@ export function HoverCard({
       aria-label={copyable ? `${copyLabel}: ${copyText}` : undefined}
       onClick={copyable
         ? (e) => {
-          const selection = window.getSelection()
+          const selection = portalWindow.getSelection()
           if (selection !== null && !selection.isCollapsed) {
             for (let i = 0; i < selection.rangeCount; i += 1) {
               if (selection.getRangeAt(i).intersectsNode(e.currentTarget)) return
@@ -288,7 +291,7 @@ export function HoverCard({
     >
       <TooltipSuppression.Provider value={setSuppressed}>{anchor}</TooltipSuppression.Provider>
       {open && !suppressed && copyable && <span className={css.status} role="status">{copied ? copiedLabel : ''}</span>}
-      {card !== false && createPortal(card, document.body)}
+      {card !== false && createPortal(card, portalDocument.body)}
     </span>
   )
 }

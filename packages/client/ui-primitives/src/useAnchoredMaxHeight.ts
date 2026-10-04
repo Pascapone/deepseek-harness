@@ -10,7 +10,7 @@ import { overlayTopMargin } from './overlay-top-margin.ts'
 
 /**
  * Safe distance kept between the overlay and the viewport top edge (mirrors
- * the Menu portal margin); the frame's published top clearance widens it.
+ * the Menu portal margin); the frame's overlay inset widens it.
  */
 const MARGIN = 12
 
@@ -20,8 +20,8 @@ const MARGIN = 12
  * @param cap - design max-height in px (the clamp never exceeds it).
  * @param signal - re-measure trigger: pass the overlay's render state so anchor
  *   moves (composer growth) re-fit; resize/scroll re-fit while mounted.
- * @param margin - viewport top margin floor in px; the frame's published top
- *   clearance widens it. Callers under fixed chrome (the conversation header)
+ * @param margin - viewport top margin floor in px; the frame's overlay
+ *   inset widens it. Callers under fixed chrome (the conversation header)
  *   raise it past their chrome's height.
  * @returns the max-height to apply inline, in px.
  */
@@ -30,15 +30,16 @@ export function useAnchoredMaxHeight(ref: RefObject<HTMLElement>, cap: number, s
   useLayoutEffect(() => {
     const el = ref.current
     if (el === null) return
+    const view = el.ownerDocument.defaultView ?? window
     const fit = () => {
-      setMaxHeight(Math.min(cap, Math.max(0, el.getBoundingClientRect().bottom - overlayTopMargin(margin))))
+      setMaxHeight(Math.min(cap, Math.max(0, el.getBoundingClientRect().bottom - overlayTopMargin(margin, el.ownerDocument))))
     }
     fit()
-    window.addEventListener('resize', fit)
-    window.addEventListener('scroll', fit, true)
+    view.addEventListener('resize', fit)
+    view.addEventListener('scroll', fit, true)
     return () => {
-      window.removeEventListener('resize', fit)
-      window.removeEventListener('scroll', fit, true)
+      view.removeEventListener('resize', fit)
+      view.removeEventListener('scroll', fit, true)
     }
   }, [ref, cap, signal, margin])
   return maxHeight

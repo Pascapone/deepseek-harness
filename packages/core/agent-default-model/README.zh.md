@@ -77,7 +77,6 @@ await ctx.agentDefaultModel.saveSelection({ provider, model, reasoningEffort: 'h
 | 文件 | 职责 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | 即时默认选择与 profile 写入 |
-| — | 不发布 invariant 配套模块，因为 Config 引用和作用域注册没有独立缓存的选择。 |
 
 ### 行为说明
 
@@ -115,7 +114,7 @@ await ctx.agentDefaultModel.saveSelection({ provider, model, reasoningEffort: 'h
 
 这些限制界定该服务的范围。它们是当前包约束，不是任务积压。
 
-- **单一的进程级默认值**——该服务只拥有一个默认值；按会话的模型选择仍由入口负责。
+- **会话选择仍由调用方负责**——作用域默认值与部署回退不会替代显式选择或会话中已记录的选择。
 - **持久化需要 profile 配置编辑器**——没有编辑器时，保存默认值不会保留选择。
 
 <a id="dev-note"></a>

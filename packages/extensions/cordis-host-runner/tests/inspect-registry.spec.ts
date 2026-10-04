@@ -1,11 +1,13 @@
 import { Context } from '@deepseek-ai/cordis'
+import TypertGateway from '@deepseek-ai/dsh-api-gateway'
+import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 import type { Fiber } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CordisInspectRegistryService } from '../src/inspect-registry.ts'
 import type { InspectConfig } from '../src/inspect-registry.ts'
-import { DynamicCordisRunnerService } from '../src/index.ts'
+import DynamicCordisRunnerService from '../src/index.ts'
 import type { CordisInspectProviderManifest, CordisInspectQueryRequest, CordisInspectQueryResolution } from '../src/types.ts'
 
 const agent = { id: 'inspect-owner' as SessionId } as Agent
@@ -16,11 +18,13 @@ const provider: CordisInspectProviderManifest = {
 }
 const failure = { ok: false, reason: 'provider-error', message: 'no catalogued Service named "sidebarRight"' } as const
 let fiber: Fiber
+let owner: Context | undefined
 
 async function setup(config: InspectConfig = {}) {
   const ctx = new Context()
   const mounted = ctx.plugin(CordisInspectRegistryService, config)
   fiber = mounted
+  owner = ctx
   await mounted
   const registry = ctx.cordisInspect
   registry.syncClientManifest([provider])
@@ -35,14 +39,63 @@ async function setup(config: InspectConfig = {}) {
   return { ctx, registry, requests, closed, abort, query, answer }
 }
 
+async function connectGatewayClient(ctx: Context): Promise<AbortController> {
+  await ctx.plugin(TypertRegistry)
+  await ctx.plugin(TypertGateway)
+  ctx.effect(() => ctx.typertGateway.registerRemoteEvents(async function* (signal) {
+    await new Promise<void>((resolve) => { signal.addEventListener('abort', () => { resolve() }, { once: true }) })
+  }, { home: '/fixture' }))
+  const connection = new AbortController()
+  const stream = await ctx.typertGateway.wireStream.open('$events', { args: {} }, (async function* () {})(), undefined, connection.signal)
+  const client = stream[Symbol.asyncIterator]()
+  ctx.effect(() => async () => { connection.abort(); await client.return?.() })
+  await client.next()
+  expect(ctx.typertGateway.hasLiveClient()).toBe(true)
+  return connection
+}
+
 beforeEach(() => { vi.useFakeTimers() })
 afterEach(async () => {
-  await fiber?.dispose()
+  await owner?.fiber.dispose()
+  owner = undefined
   vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
 describe('bounded Client inspect queries', () => {
+  it('does not dispatch or allocate timers without a live Gateway Client', async () => {
+    const h = await setup()
+    await h.ctx.plugin(TypertRegistry)
+    await h.ctx.plugin(TypertGateway)
+    await expect(h.query()).rejects.toThrow('has no connected Harness page')
+    expect(h.requests).toEqual([])
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('accepts a response through a connected Gateway', async () => {
+    const h = await setup()
+    await connectGatewayClient(h.ctx)
+    const result = h.query()
+    expect(h.answer({ ok: true, data: { found: true } })).toEqual({ accepted: true })
+    await expect(result).resolves.toEqual({ found: true })
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('keeps the original deadline after Gateway disconnection', async () => {
+    const h = await setup({ clientInspectTimeoutMs: 100 })
+    const connection = await connectGatewayClient(h.ctx)
+    const result = h.query()
+    const rejected = expect(result).rejects.toThrow('timed out after 100ms')
+    connection.abort()
+    expect(h.ctx.typertGateway.hasLiveClient()).toBe(false)
+    await vi.advanceTimersByTimeAsync(99)
+    expect(h.closed).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    await rejected
+    expect(h.closed).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('returns the first provider error after a non-resetting grace and ignores late replies', async () => {
     const h = await setup()
     const remove = vi.spyOn(h.abort.signal, 'removeEventListener')
@@ -79,8 +132,8 @@ describe('bounded Client inspect queries', () => {
   it('times out silent pages at the hard deadline and cleans up', async () => {
     const h = await setup()
     const result = h.query()
-    const rejected = expect(result).rejects.toThrow('Service.listService: Client inspect query timed out after 30000ms; no valid page response.')
-    await vi.advanceTimersByTimeAsync(29_999)
+    const rejected = expect(result).rejects.toThrow('Service.listService: Client inspect query timed out after 10000ms; no valid page response.')
+    await vi.advanceTimersByTimeAsync(9_999)
     expect(h.closed).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1)
     await rejected
@@ -106,7 +159,7 @@ describe('bounded Client inspect queries', () => {
     await vi.advanceTimersByTimeAsync(249)
     expect(h.answer({ ok: true, data: { found: true } })).toEqual({ accepted: true })
     await expect(result).resolves.toEqual({ found: true })
-    await vi.advanceTimersByTimeAsync(30_000)
+    await vi.advanceTimersByTimeAsync(10_000)
     expect(h.closed).toHaveBeenCalledTimes(1)
     expect(vi.getTimerCount()).toBe(0)
   })
@@ -157,7 +210,7 @@ describe('bounded Client inspect queries', () => {
   })
 
   it('never extends the hard deadline for an error grace and preserves the first diagnostic', async () => {
-    const h = await setup({ inspectQueryTimeoutMs: 100, inspectQueryErrorGraceMs: 250 })
+    const h = await setup({ clientInspectTimeoutMs: 100, inspectQueryErrorGraceMs: 250 })
     const result = h.query()
     const rejected = expect(result).rejects.toThrow(failure.message)
     await vi.advanceTimersByTimeAsync(99)
@@ -205,7 +258,7 @@ describe('bounded Client inspect queries', () => {
         h.answer(failure)
         h.answer(failure, agent, 1)
       }
-      await vi.advanceTimersByTimeAsync(mode === 'timeout' ? 30_000 : 250)
+      await vi.advanceTimersByTimeAsync(mode === 'timeout' ? 10_000 : 250)
     }
     await Promise.all([first, second])
     await vi.waitFor(() => { expect(logged).toHaveBeenCalledTimes(2) })
@@ -218,10 +271,10 @@ describe('bounded Client inspect queries', () => {
 
   it('validates runner configuration and retains VM defaults', () => {
     expect(DynamicCordisRunnerService.Config({})).toMatchObject({
-      vmTimeoutMs: 5000, inspectQueryTimeoutMs: 30_000, inspectQueryErrorGraceMs: 250,
+      vmTimeoutMs: 5000, clientInspectTimeoutMs: 10_000, inspectQueryErrorGraceMs: 250,
     })
     for (const value of [0, -1, Infinity, NaN, 2_147_483_648]) {
-      expect(() => DynamicCordisRunnerService.Config({ inspectQueryTimeoutMs: value })).toThrow()
+      expect(() => DynamicCordisRunnerService.Config({ clientInspectTimeoutMs: value })).toThrow()
     }
     expect(() => DynamicCordisRunnerService.Config({ inspectQueryErrorGraceMs: -1 })).toThrow()
     expect(DynamicCordisRunnerService.Config({ inspectQueryErrorGraceMs: 0 })).toMatchObject({ inspectQueryErrorGraceMs: 0 })
