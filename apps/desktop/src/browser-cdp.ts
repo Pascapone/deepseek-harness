@@ -16,20 +16,32 @@ const PAGE_COMMANDS = new Set([
   'Performance.enable', 'Accessibility.getFullAXTree',
   'DOM.enable', 'DOM.disable', 'DOM.getDocument', 'DOM.querySelector', 'DOM.querySelectorAll',
   'DOM.describeNode', 'DOM.getBoxModel', 'DOM.getContentQuads', 'DOM.resolveNode', 'DOM.scrollIntoViewIfNeeded',
-  // ponytail: hidden/minimized Electron Guests ignore native mouse events; use a real offscreen input backend if hidden clicks are required.
+  // ponytail: hidden Guests ignore mouse events; use an offscreen input backend if hidden clicks are required.
   'Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Input.insertText',
   'Emulation.setDeviceMetricsOverride', 'Emulation.clearDeviceMetricsOverride',
   'Emulation.setFocusEmulationEnabled', 'Emulation.setEmulatedMedia',
 ])
 const PAGE_EVENTS = /^(?:Page|Network|Runtime|Log|Audits|Performance|DOM|Input|Emulation)\.[A-Za-z]+$/u
 
-type Guest = Pick<WebContents, 'debugger' | 'isDestroyed' | 'on' | 'off' | 'id' | 'hostWebContents'>
+type Guest = Pick<WebContents, 'debugger' | 'isDestroyed' | 'id'> & {
+  readonly hostWebContents: Pick<WebContents, 'isDestroyed' | 'executeJavaScript'> | null
+  on(event: 'destroyed', listener: () => void): void
+  off(event: 'destroyed', listener: () => void): void
+}
 type Command = { readonly id: number; readonly method: string; readonly params?: Record<string, unknown>; readonly sessionId?: string }
-type TargetInfo = { readonly targetId: string; readonly type: 'page'; readonly browserContextId: string;
-  readonly url: string; readonly title: string; readonly attached: boolean }
+type TargetInfo = {
+  readonly targetId: string
+  readonly type: 'page'
+  readonly browserContextId: string
+  readonly url: string
+  readonly title: string
+  readonly attached: boolean
+}
 
 /** Caller must verify the guest's application window, tab lease, and Agent before opening this one-use endpoint. */
-export async function openBrowserCdp(guest: Guest): Promise<{ readonly endpoint: string; close(): Promise<void>; readonly closed: Promise<void> }> {
+export async function openBrowserCdp(
+  guest: Guest,
+): Promise<{ readonly endpoint: string; close(): Promise<void>; readonly closed: Promise<void> }> {
   if (guest.isDestroyed() || guest.debugger.isAttached()) throw new Error('desktop browser CDP: guest unavailable')
   guest.debugger.attach('1.3')
   let info: { url?: string; title?: string; browserContextId?: string }

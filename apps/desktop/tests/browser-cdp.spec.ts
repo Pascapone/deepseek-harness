@@ -88,7 +88,7 @@ async function rejected(url: string, options: WebSocket.ClientOptions): Promise<
 
 it('exposes only one leased guest, rejects other sockets and targets, and revokes on destruction', async () => {
   const guest = new FakeGuest()
-  const cdp = await openBrowserCdp(guest as Parameters<typeof openBrowserCdp>[0])
+  const cdp = await openBrowserCdp(guest)
   try {
     expect(await rejected(cdp.endpoint, { origin: 'https://evil.example' })).toBe(403)
     expect(await rejected(cdp.endpoint, { headers: { Host: 'evil.example' } })).toBe(403)
@@ -138,7 +138,7 @@ it('exposes only one leased guest, rejects other sockets and targets, and revoke
 
 it('rejects oversized MCP commands without crashing Main or closing the guest', async () => {
   const guest = new FakeGuest()
-  const cdp = await openBrowserCdp(guest as Parameters<typeof openBrowserCdp>[0])
+  const cdp = await openBrowserCdp(guest)
   try {
     const socket = new WebSocket(cdp.endpoint)
     await once(socket, 'open')
@@ -153,7 +153,7 @@ it('rejects oversized MCP commands without crashing Main or closing the guest', 
 
 it('Browser.close disconnects CDP without closing the desktop guest', async () => {
   const guest = new FakeGuest()
-  const cdp = await openBrowserCdp(guest as Parameters<typeof openBrowserCdp>[0])
+  const cdp = await openBrowserCdp(guest)
   try {
     const socket = new WebSocket(cdp.endpoint)
     await once(socket, 'open')
