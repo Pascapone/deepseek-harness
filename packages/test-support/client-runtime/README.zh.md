@@ -9,9 +9,9 @@ kind: "package-library"
 
 ## 概述
 
-`SlotTestRuntime.create()` 让 Vitest 套件在 jsdom 中驱动生产 slot、store、带类型的 Session 与 Workspace fixture，并对局部 DOM 断言。面向插件激活、重载、重连与清理的测试，`createClientTest` 使用具名端点 Remote mock 启动 web profile 的 bundle roster，无需业务 Host。缺失服务与未打桩调用会明确失败。整机 fixture 拥有启动和销毁，局部 runtime 提供幂等销毁。通过 `devDependencies` 将本包用于客户端测试；它不是产品插件。
+`SlotTestRuntime.create()` 在 jsdom 中驱动生产 slot、store、带类型的 Session 与 Workspace fixture，以及 DOM 断言。`createClientTest` 使用具名端点 Remote mock 启动 web profile 的 bundle roster，用于插件激活、重载、重连与清理测试，无需业务 Host。缺失服务与未打桩调用会明确失败。两种 fixture 都拥有销毁过程。通过 `devDependencies` 使用本测试库；它不是产品插件。
 
-链接到工作区的 bundle 从实际包目录解析依赖；各 bundle 自身目录中的依赖优先于祖先目录中继承的包。
+链接到工作区的 bundle 从实际包目录解析依赖；bundle 从自身清单解析自己的包名，各 bundle 自身目录中的依赖优先于祖先目录中继承的包。
 
 ## 目录
 

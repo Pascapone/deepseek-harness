@@ -9,8 +9,8 @@
   en: e7c80d1de4d328b4
   zh: d9f368c27fd9f998
 /session-persistence-event-catalog/persistence-type-fingerprints:
-  en: 33dd28b1c768cd8b
-  zh: 7256442baf2faed1
+  en: f0f5043759836664
+  zh: c88d823dd784ec08
 /session-persistence-event-catalog/event-envelope:
   en: 7ebb1a2e0dd1f916
   zh: 8946f415dda5c1b8
@@ -951,11 +951,11 @@
   en: 09c25cb603f1253e
   zh: be9ac4ac394dc1fc
 /session-persistence-event-catalog/resolved-persistence-types/contextsnapshotsection~2:
-  en: 6e11a7855b002f20
-  zh: d752566bb2b75948
+  en: 1a94217915abcb91
+  zh: ce70e030aab1621e
 /session-persistence-event-catalog/resolved-persistence-types/continuablesubagentdescriptordata:
-  en: 586743dfeab78c55
-  zh: 26ccef4a02dd7a58
+  en: 0b7be683faf56dbb
+  zh: b2f1f537bc0cfa28
 /session-persistence-event-catalog/resolved-persistence-types/deepseeksearchllmrequest:
   en: ea25cd944b4b4020
   zh: 87f8944f766d3a85
@@ -1164,11 +1164,11 @@
   en: e865a9a3b7749c1a
   zh: 16800bf55135c89e
 /session-persistence-event-catalog/resolved-persistence-types/subagentcatalogevent:
-  en: e9c8f82e0497e5a5
-  zh: 55ab13b1a5067759
+  en: 5f43db54138b885c
+  zh: eb3a23cf16f5022b
 /session-persistence-event-catalog/resolved-persistence-types/subagentdescriptordata:
-  en: c56821e57987ae9e
-  zh: 0364f59a472d51da
+  en: ff21b0ec4cc3f6c2
+  zh: a41a0533ad32d097
 /session-persistence-event-catalog/resolved-persistence-types/subagentsettledmessagesource:
   en: a5e19707264c7449
   zh: 4c619e931997d3f0
@@ -1221,11 +1221,11 @@
   en: 036b2595215410bb
   zh: 41792808ebac1fa3
 /session-persistence-event-catalog/resolved-persistence-types/toolremovalblock:
-  en: f43a635a14568780
-  zh: 8d22226b045122eb
+  en: e13332b112a038b9
+  zh: 886eca673bb1ee3b
 /session-persistence-event-catalog/resolved-persistence-types/toolrestriction:
-  en: b6f6001a25bcbf82
-  zh: bd2b3c9fe0ad2ba8
+  en: 7736fd0455bb678f
+  zh: a96fc38d3cc474b7
 /session-persistence-event-catalog/resolved-persistence-types/toolresultmessage:
   en: 2258683c3cfa4ce3
   zh: 5663aa76c911761b
@@ -1974,11 +1974,11 @@
   en: 55ec9a3f52280221
   zh: bf2afb135514eb45
 /session-persistence-event-catalog/resolved-persistence-types/type-subagent-catalog:
-  en: 85475a5c4198d213
-  zh: 16a71daeb92288db
+  en: 173fabf7f05dab0d
+  zh: edc103c1414063f5
 /session-persistence-event-catalog/resolved-persistence-types/type-subagent-descriptor:
-  en: 2adab4361a5b558d
-  zh: 7f2a8da669f9e117
+  en: 9e8c559d042de359
+  zh: 114eedaeb0dadab0
 /session-persistence-event-catalog/resolved-persistence-types/type-subagent-model-selection-policy:
   en: 9dd6539f4a5d9d16
   zh: d886630b70a4bce8

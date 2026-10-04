@@ -203,7 +203,7 @@ it.skipIf(!process.env.DSH_MULTI_AGENT_V2_BUNDLE)('V2 replaces only fresh-start 
     agentOptions: { provider: 'mock', model: 'mock' },
     setup: async agentCtx => void await ctx.agentPresets.mount(agentCtx, 'locked') })).agent
   const lockedDenies = new Set<string>()
-  ;(ctx.emit as unknown as (name: string, agent: typeof lockedParent, out: Set<string>) => void)(
+  ;(ctx.emit as (name: 'dsh-multi-agent/tool-denies', agent: typeof lockedParent, out: Set<string>) => void)(
     'dsh-multi-agent/tool-denies', lockedParent, lockedDenies)
   expect([...lockedDenies]).toContain('delegate_agent')
   const locked = ctx.tools.schemas(lockedParent).map(tool => tool.name)

@@ -336,7 +336,11 @@ function windowsProcessState(bindings: Win32Bindings, pid: number): WindowsProce
   }
 }
 
-/** Read a live Windows PID's exact creation time in .NET UTC ticks; a missing identity cannot establish ownership. */
+/**
+ * Read a live Windows PID's exact creation time in .NET UTC ticks.
+ * @param pid - process identifier to inspect.
+ * @returns exact creation time, or undefined when ownership cannot be established.
+ */
 export function windowsStartTicks(pid: number): string | undefined {
   const started = windowsProcessState(win32Bindings(), pid)?.started
   if (started === undefined) return undefined

@@ -575,7 +575,7 @@ export class LocalJobRegistry extends JobRegistry {
   private setProcessRoot(state: ProducerState, root: { pid: number; started: string }): void {
     const job = state.job
     if (job !== undefined && isTerminal(job.status)) return
-    // Optional provenance must never fail a command that has already started.
+    // Optional process identity must never fail a command that has already started.
     if (!Number.isSafeInteger(root.pid) || root.pid <= 0 || !/^\d{15,20}$/.test(root.started) || state.processRoot !== undefined) return
     state.processRoot = { ...root }
     if (job !== undefined) this.emit({ type: 'process', job: this.view(job) }, job.owner)

@@ -85,6 +85,7 @@ interface SidebarRightSessions {
  * @param tabs - registered tab types.
  * @param pin - resource retention for an occurrence's lifetime.
  * @param host - the viewport rule and focus continuity the commands use.
+ * @param retainPinned - optional retention of a detached tab's Session view.
  * @returns the controller; store adoption and scope removal; naming the on-screen Session; and recording a seat's room rule.
  */
 export function createSidebarRightController(tabs: SidebarRightTabRegistry, pin: PinResource, host: SidebarRightHost,
@@ -291,6 +292,7 @@ export class SidebarRightController implements ISidebarRight {
   private readonly pinned = new Set<string>()
   private activeSession: SessionId | undefined
   private resumeSession: SessionId | undefined
+  /** Detached tab targets keyed by their Session and tab identities. */
   readonly popouts = createSnapshotStore<ReadonlyMap<string, HTMLElement | undefined>>(new Map())
 
   /**
@@ -731,7 +733,10 @@ export class SidebarRightController implements ISidebarRight {
     }
   }
 
-  /** Close inactive session windows without docking their tabs; reopen on selection. */
+  /**
+   * Close inactive Session windows without docking their tabs; reopen on selection.
+   * @param sessionId - selected Session, or none.
+   */
   activateWindows(sessionId: SessionId | undefined): void {
     if (this.activeSession === sessionId) return
     for (const [key, opened] of [...this.windows]) {
@@ -752,7 +757,10 @@ export class SidebarRightController implements ISidebarRight {
     this.releaseWindow(key)
   }
 
-  /** Retry only once per selection; browsers may refuse automatic popups. */
+  /**
+   * Retry only once per selection; browsers may refuse automatic popups.
+   * @param sessionId - Session whose parked windows may reopen.
+   */
   resumeWindows(sessionId: SessionId): void {
     if (this.resumeSession !== sessionId || this.windowOpener === undefined) return
     const layout = this.adopted.get(sessionId)?.store.getSnapshot().bySession[sessionId]?.layout
@@ -827,7 +835,11 @@ export class SidebarRightController implements ISidebarRight {
     catch (error) { console.error('Sidebar tab close failed:', error) }
   }
 
-  /** Follow a floating pane through tab replacement; release it when the pane docks or closes. */
+  /**
+   * Follow a floating pane through tab replacement; release it when the pane docks or closes.
+   * @param sessionId - owning Session identity.
+   * @param layout - latest committed Session layout.
+   */
   reconcileWindows(sessionId: SessionId, layout: LayoutState): void {
     for (const [key, opened] of [...this.windows]) {
       if (opened.sessionId !== sessionId) continue

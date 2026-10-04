@@ -277,7 +277,7 @@ describe('dsh-subagent-spawn-in-process', () => {
     await parentHandle.dispose()
   })
 
-  it('advertises every start-time capability', async () => {
+  it('advertises start-time and continuable preset capabilities', async () => {
     const { ctx } = await setup([])
     const provider = ctx.subagents.getProvider('spawn')!
     expect(provider.capabilities).toEqual({
@@ -286,6 +286,7 @@ describe('dsh-subagent-spawn-in-process', () => {
       depthLimit: true,
       toolFilter: true,
       persona: true,
+      agentPreset: true,
     })
   })
 
@@ -436,7 +437,7 @@ describe('dsh-subagent-spawn-in-process', () => {
         prompt: [{ type: 'text', text: 'do X' }],
         parent,
         toolFilter: { deny: ['no_such_tool'] },
-      })).rejects.toThrow(/unknown global tool "no_such_tool"/)
+      })).rejects.toThrow(/unknown tool "no_such_tool"/)
       expect(ctx.agents.list().length).toBe(before)
     })
   })

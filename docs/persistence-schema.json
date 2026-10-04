@@ -15203,7 +15203,7 @@
       "kind": "event",
       "event": "subagent/descriptor",
       "surface": false,
-      "digest": "b79ada42962cad0190a9d465805260567621fa3a4abd757eb31e6016b52d5ab5",
+      "digest": "4e0a4d434b7b9623312e634c4f5099627cbb1f2657cd532a31290d2e50e50181",
       "schema": {
         "root": 0,
         "nodes": [
@@ -15217,22 +15217,22 @@
               },
               {
                 "name": "ignorable",
-                "type": 10,
+                "type": 11,
                 "optional": true
               },
               {
                 "name": "seq",
-                "type": 7,
+                "type": 8,
                 "optional": false
               },
               {
                 "name": "time",
-                "type": 7,
+                "type": 8,
                 "optional": false
               },
               {
                 "name": "type",
-                "type": 11,
+                "type": 12,
                 "optional": false
               }
             ],
@@ -15242,7 +15242,7 @@
             "kind": "union",
             "types": [
               2,
-              8
+              9
             ]
           },
           {
@@ -15290,7 +15290,7 @@
               },
               {
                 "name": "version",
-                "type": 7,
+                "type": 8,
                 "optional": false
               }
             ],
@@ -15316,6 +15316,11 @@
                 "name": "deny",
                 "type": 6,
                 "optional": true
+              },
+              {
+                "name": "includeOwn",
+                "type": 7,
+                "optional": true
               }
             ],
             "indices": []
@@ -15323,6 +15328,10 @@
           {
             "kind": "array",
             "element": 3
+          },
+          {
+            "kind": "primitive",
+            "type": "boolean"
           },
           {
             "kind": "primitive",
@@ -15338,7 +15347,7 @@
               },
               {
                 "name": "mode",
-                "type": 9,
+                "type": 10,
                 "optional": false
               },
               {
@@ -15348,7 +15357,7 @@
               },
               {
                 "name": "version",
-                "type": 7,
+                "type": 8,
                 "optional": false
               }
             ],
@@ -21852,6 +21861,15 @@
       ]
     },
     {
+      "digest": "06ad82d3d9d77087f958b7f657326ac80e6d927949bdf1cc2b1225d08f6f5475",
+      "names": [
+        "packages/subagent/subagent/src/descriptor.ts#ContinuableSubagentDescriptorData"
+      ],
+      "sources": [
+        "packages/subagent/subagent/src/descriptor.ts:72"
+      ]
+    },
+    {
       "digest": "07e1a58c58b593f507b8e7f25723bb0aa42baae6e00f5ecfddf28cb1e64d3235",
       "names": [
         "packages/session/session-title/src/types.ts#SessionTitleModelIdentity",
@@ -22703,15 +22721,6 @@
       "sources": []
     },
     {
-      "digest": "3cfc3a56502da1f8c6153c2c56657bab4b749056968634dd0991d325ec1c919f",
-      "names": [
-        "packages/core/tools/src/index.ts#ToolRestriction"
-      ],
-      "sources": [
-        "packages/core/tools/src/index.ts:700"
-      ]
-    },
-    {
       "digest": "3d7d07060a7be77984feb651ea2bf1925d3e0477911d9d3ed86330d1e8ca6182",
       "names": [
         "packages/feedback/message-feedback/src/types.ts#MessageFeedbackItem"
@@ -22964,6 +22973,11 @@
     },
     {
       "digest": "4e011753f8263f436efaabfbb3b4db53a98fc55342c5ded2daf7208b217be159",
+      "names": [],
+      "sources": []
+    },
+    {
+      "digest": "4e0a4d434b7b9623312e634c4f5099627cbb1f2657cd532a31290d2e50e50181",
       "names": [],
       "sources": []
     },
@@ -23291,12 +23305,12 @@
       "sources": []
     },
     {
-      "digest": "6487b10ba7542f3c447b1e41a1c6a590b7bfafe0b9b66b49f34028da85bb970f",
+      "digest": "6465a64dd68a0caba80f9562f7b0429622850d275faa2169a4561e5c3483ff5d",
       "names": [
-        "packages/subagent/subagent/src/descriptor.ts#ContinuableSubagentDescriptorData"
+        "packages/core/tools/src/index.ts#ToolRestriction"
       ],
       "sources": [
-        "packages/subagent/subagent/src/descriptor.ts:72"
+        "packages/core/tools/src/index.ts:701"
       ]
     },
     {
@@ -23528,6 +23542,15 @@
       "digest": "7382c4fc95fe8c5db65ca4d9da572b115d0dbb818b7f32c22ab040318ffbb4bc",
       "names": [],
       "sources": []
+    },
+    {
+      "digest": "7502219453b087fbecf43e02dd9e430c06fcd2c2360f60c4ed65374182c9405f",
+      "names": [
+        "packages/subagent/subagent/src/descriptor.ts#SubagentDescriptorData"
+      ],
+      "sources": [
+        "packages/subagent/subagent/src/descriptor.ts:89"
+      ]
     },
     {
       "digest": "7554565be416b0342053ee6a46256c9dab07c487349b4a5f10bab1edc151c619",
@@ -23783,15 +23806,6 @@
       "digest": "8620189c8e33582708ece48fd2d20dc4d57912486a17bdbb9aea4c44f7018062",
       "names": [],
       "sources": []
-    },
-    {
-      "digest": "86d1d0e9cfebb240421187e3dc37fb71cc38a1501885cf32f8f9adef7b0a2bde",
-      "names": [
-        "packages/subagent/subagent/src/descriptor.ts#SubagentDescriptorData"
-      ],
-      "sources": [
-        "packages/subagent/subagent/src/descriptor.ts:89"
-      ]
     },
     {
       "digest": "86e1e384495ee09ac2d60c9db3610f1f1fddac2d248f6f1d6000e78054680219",
@@ -24553,11 +24567,6 @@
     },
     {
       "digest": "b79641a9d25e756636dc0c706fdf3c4583ccb7d4920e009e6e86c0759cf4de4c",
-      "names": [],
-      "sources": []
-    },
-    {
-      "digest": "b79ada42962cad0190a9d465805260567621fa3a4abd757eb31e6016b52d5ab5",
       "names": [],
       "sources": []
     },

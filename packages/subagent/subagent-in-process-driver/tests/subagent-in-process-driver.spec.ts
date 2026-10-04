@@ -372,7 +372,7 @@ describe('startInProcessRun', () => {
     await expect(startInProcessRun({
       ...request(parent),
       toolFilter: { deny: ['unknown-tool'] },
-    }, {})).rejects.toThrow('unknown global tool')
+    }, {})).rejects.toThrow('unknown tool "unknown-tool"')
     expect(ctx.agents.list()).toHaveLength(beforeAgents)
     expect(ctx.sessions.list()).toHaveLength(beforeSessions)
   })

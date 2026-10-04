@@ -58,7 +58,12 @@ export class SidebarSessionViews {
     return view.mount()
   }
 
-  /** Hold the source Session's rendered View while one of its detached tabs is locked. */
+  /**
+   * Hold the source Session's rendered View while one of its detached tabs is locked.
+   * @param sessionId - owning Session identity.
+   * @param tabId - detached tab occurrence.
+   * @param pinned - whether the tab retains its source view.
+   */
   pin(sessionId: SessionId, tabId: TabId, pinned: boolean): void {
     const key = `${sessionId}:${tabId}`
     if (pinned && !this.pinned.has(key)) {

@@ -92,6 +92,11 @@ interface JobHandle {
    * @param line - the new progress line.
    */
   updateProgress(line: string): void
+  /**
+   * Optionally publish the owned Windows launcher once; invalid or late identities
+   * are ignored. Consumers must verify its creation time and descendant chain.
+   */
+  setProcessRoot?(root: { pid: number; started: string }): void
 }
 ```
 
@@ -240,6 +245,8 @@ interface JobView {
   readonly progress?: string
   /** Terminal reason (`exit code: 3`); a recorded kill reason is merged in. */
   readonly detail?: string
+  /** Windows launcher owned by a live job, when supplied by its producer. `started` is exact UTC DateTime ticks, not a PID-only guess. */
+  readonly processRoot?: { readonly pid: number; readonly started: string }
   /** Epoch ms when the job was registered. */
   readonly startedAt: number
   /** Epoch ms when the job settled; absent while live. */
@@ -286,8 +293,8 @@ The registry announces every commit through one filtered stream. Lifecycle event
  */
 type JobEvent =
   | {
-    /** Registration commit, progress line change, stopping transition, or removal from the visible set. */
-    readonly type: 'registered' | 'progress' | 'stopping' | 'removed'
+    /** Registration, process-root publication, progress, stopping, or removal commit. */
+    readonly type: 'registered' | 'process' | 'progress' | 'stopping' | 'removed'
     readonly job: JobView
   }
   | {

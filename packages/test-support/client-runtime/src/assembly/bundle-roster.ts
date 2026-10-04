@@ -14,9 +14,9 @@
  * @module @deepseek-ai/dsh-client-test-runtime/src/assembly/bundle-roster
  */
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
-import { createRequire } from 'node:module'
+import { createRequire, findPackageJSON } from 'node:module'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { evaluate, isJsExpr, type EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
 import { applyEntryPatches, entryListSchema, type PatchOptions } from '@deepseek-ai/cordis-plugin-include'
 import { exactPackageSpecifier, parseDshClient } from '@deepseek-ai/dsh-client-modules/client'
@@ -130,8 +130,12 @@ function readManifest(path: string): PackageManifest {
   return JSON.parse(readFileSync(path, 'utf8')) as PackageManifest
 }
 
-/** Resolve package manifests to real paths so linked bundles use their own dependency directories. */
+/** Resolve self references before ancestor packages; linked bundles keep their own dependency directories. */
 function locateManifest(anchors: readonly string[], name: string): string | undefined {
+  for (const anchor of anchors) {
+    const own = findPackageJSON('.', pathToFileURL(anchor))
+    if (own !== undefined && readManifest(own).name === name) return realpathSync.native(own)
+  }
   const paths = anchors.map(anchor => createRequire(anchor).resolve.paths(name) ?? [])
   for (let depth = 0; depth < Math.max(...paths.map(search => search.length)); depth++) {
     for (const search of paths) {

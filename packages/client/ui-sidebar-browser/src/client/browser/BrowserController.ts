@@ -80,6 +80,7 @@ export class BrowserController implements HostObservable<BrowserControllerState>
   /**
    * Attach the page without transferring ownership of its tab occurrence.
    * @param viewportId - mounted content container.
+   * @param viewport - optional owner-document mount element.
    * @returns physical attachment cleanup only.
    */
   mount(viewportId: string, viewport?: HTMLElement): () => void {

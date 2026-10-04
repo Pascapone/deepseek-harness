@@ -129,15 +129,26 @@ describe('Presented workspace file native open route', () => {
     expect(opener).not.toHaveBeenCalled()
   })
 
-  it('opens external regular files through absolute and relative paths but refuses final symlinks', async () => {
+  it('refuses final file symlinks without launching', async ({ skip }) => {
     const { root, cwd, file, open, opener } = await fixture()
     const outside = join(root, 'outside.txt')
     await writeFile(outside, 'outside')
     const source = join(cwd, file.path)
     await unlink(source)
-    await symlink(outside, source)
+    try { await symlink(outside, source) } catch (error) {
+      if (process.platform === 'win32' && error instanceof Error && 'code' in error && error.code === 'EPERM') {
+        skip('Windows file symlinks require Developer Mode or Administrator rights')
+      }
+      throw error
+    }
     expect((await open()).status).toBe(404)
     expect(opener).not.toHaveBeenCalled()
+  })
+
+  it('opens external regular files through absolute and relative paths', async () => {
+    const { root, file, open, opener } = await fixture()
+    const outside = join(root, 'outside.txt')
+    await writeFile(outside, 'outside')
     for (const path of ['../outside.txt', outside]) {
       file.path = path
       expect((await open()).status).toBe(204)

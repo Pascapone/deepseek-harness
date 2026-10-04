@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-右侧 Sidebar：停靠套件与本产品相遇的地方。它为每个会话持有一个停靠面，以两种呈现形态之一把它画成贴靠框架右列边缘的一块面板，把展开按钮放进会话 header，并拥有导航控制器（`ctx.sidebarRight`）、tab 类型注册表（`ctx.sidebarRightTabs`），以及告诉每个已开 tab 它是如何被导航到、能活多久的 Tab 域。
+右侧 Sidebar 为每个 Session 提供一个停靠面、普通和全屏两种呈现方式，以及会话标题栏中的展开按钮。本包拥有导航控制器（`ctx.sidebarRight`）、tab 类型注册表（`ctx.sidebarRightTabs`），并管理每个已打开 tab 的导航与生命周期。
 
 ## 目录
 

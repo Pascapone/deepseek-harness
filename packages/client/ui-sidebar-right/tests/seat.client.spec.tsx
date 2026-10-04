@@ -1037,11 +1037,11 @@ it('parks detached tabs on session switch and restores their saved screen bounds
   const open = vi.fn((..._args: unknown[]) => {
     const target = document.createElement('div')
     document.body.append(target)
-    const popup = Object.assign(new EventTarget(), {
+    const popup = Object.assign(new EventTarget() as Window, {
       document: { body: target, title: '' }, focus: vi.fn(),
       screenX: 112, screenY: 218, outerWidth: 730, outerHeight: 590,
       closed: false, close() { this.closed = true },
-    }) as unknown as Window
+    })
     popups.push({ target, popup })
     return popup
   })
@@ -1088,11 +1088,11 @@ it('keeps a locked satellite and its original tab alive through a session switch
   const tab = h.open('locked.txt')
   const target = document.createElement('div')
   document.body.append(target)
-  const popup = Object.assign(new EventTarget(), {
+  const popup = Object.assign(new EventTarget() as Window, {
     document: { body: target }, closed: false,
     screenX: 20, screenY: 20, outerWidth: 800, outerHeight: 600,
     focus() {}, close() { this.closed = true },
-  }) as unknown as Window
+  })
   const release = h.controller.registerWindowOpener(() => popup)
   try {
     act(() => { h.controller.popout(tab.id); h.controller.setPinned(SESSION, tab.id, true) })
@@ -1120,10 +1120,10 @@ it('switches several satellites in both directions without mixing sessions', asy
   const release = h.controller.registerWindowOpener(() => {
     const target = document.createElement('div')
     document.body.append(target)
-    const popup = Object.assign(new EventTarget(), {
+    const popup = Object.assign(new EventTarget() as Window, {
       document: { body: target }, screenX: 42, screenY: 60, outerWidth: 800, outerHeight: 600,
       closed: false, focus() {}, close() { this.closed = true },
-    }) as unknown as Window
+    })
     windows.push({ target, popup })
     return popup
   })
@@ -1164,10 +1164,10 @@ it('retains blocked restorations and retries them without docking', async () => 
     const target = document.createElement('div')
     document.body.append(target)
     targets.push(target)
-    return Object.assign(new EventTarget(), {
+    return Object.assign(new EventTarget() as Window, {
       document: { body: target }, screenX: -260, screenY: 77, outerWidth: 810, outerHeight: 620,
       closed: false, focus() {}, close() { this.closed = true },
-    }) as unknown as Window
+    })
   })
   const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
   const release = h.controller.registerWindowOpener(open)
@@ -1197,10 +1197,10 @@ it('keeps a Start-selected module in the same satellite, then removes it on nati
   const guide = Object.values(h.layout().tabs).find(tab => tab.kind === 'guide')!
   const target = document.createElement('div')
   document.body.append(target)
-  const popup = Object.assign(new EventTarget(), {
+  const popup = Object.assign(new EventTarget() as Window, {
     document: { body: target, title: 'Start — DSH' }, focus: vi.fn(),
     closed: false, close() { this.closed = true },
-  }) as unknown as Window
+  })
   const release = h.controller.registerWindowOpener(() => popup)
   try {
     act(() => { expect(h.controller.popout(guide.id)).toBe(true) })
@@ -1227,9 +1227,9 @@ it('preserves the same tab DOM when returning from the satellite', async () => {
   const body = element(h.view.container, `[data-tab-body="${tab.id}"]`)
   const target = document.createElement('div')
   document.body.append(target)
-  const popup = Object.assign(new EventTarget(), {
+  const popup = Object.assign(new EventTarget() as Window, {
     document: { body: target }, closed: false, focus: vi.fn(), close: vi.fn(),
-  }) as unknown as Window
+  })
   const release = h.controller.registerWindowOpener(() => popup)
   try {
     act(() => { h.controller.popout(tab.id) })
@@ -1252,9 +1252,9 @@ it('removes a popout when its native window closes, and leaves blocked popups do
   blocked()
   const target = document.createElement('div')
   document.body.append(target)
-  const popup = Object.assign(new EventTarget(), {
+  const popup = Object.assign(new EventTarget() as Window, {
     document: { body: target }, closed: false, focus: vi.fn(), close: vi.fn(),
-  }) as unknown as Window
+  })
   const close = vi.fn()
   const stop = h.controller.registerCloseHandler('text', close)
   const release = h.controller.registerWindowOpener(() => popup)
@@ -1280,9 +1280,9 @@ it('keeps the tab accessible if native close cleanup fails', async () => {
   const body = element(h.view.container, `[data-tab-body="${tab.id}"]`)
   const target = document.createElement('div')
   document.body.append(target)
-  const popup = Object.assign(new EventTarget(), {
+  const popup = Object.assign(new EventTarget() as Window, {
     document: { body: target }, closed: false, focus() {}, close() { this.closed = true },
-  }) as unknown as Window
+  })
   const failure = new Error('cleanup failed')
   const stop = h.controller.registerCloseHandler('text', () => { throw failure })
   const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -1308,9 +1308,9 @@ it('closes a popup found closed during session switch rather than parking it', a
   const tab = h.open('already-closed.txt')
   const target = document.createElement('div')
   document.body.append(target)
-  const popup = Object.assign(new EventTarget(), {
+  const popup = Object.assign(new EventTarget() as Window, {
     document: { body: target }, closed: false, focus() {}, close() { this.closed = true },
-  }) as unknown as Window
+  })
   const release = h.controller.registerWindowOpener(() => popup)
   try {
     act(() => { h.controller.popout(tab.id) })
@@ -1327,9 +1327,9 @@ it('closes satellites synchronously when their opener unloads', async () => {
   const tab = h.open('unload.txt')
   const target = document.createElement('div')
   document.body.append(target)
-  const popup = Object.assign(new EventTarget(), {
+  const popup = Object.assign(new EventTarget() as Window, {
     document: { body: target }, closed: false, focus: vi.fn(), close: vi.fn(),
-  }) as unknown as Window
+  })
   const release = h.controller.registerWindowOpener(() => popup)
   try {
     act(() => { h.controller.popout(tab.id) })

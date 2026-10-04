@@ -10,6 +10,8 @@ import { ElectronWebviewPresentation } from './ElectronWebviewPresentation.ts'
  * @param options - checkpoint and source-tab callbacks.
  * @param bridge - desktop-only transport.
  * @param workspace - storage account resolver.
+ * @param sessionId - owning Session identity.
+ * @param tabId - owning tab occurrence.
  * @returns separate navigation and presentation faces.
  */
 export function createElectronPage(options: BrowserPageOptions, bridge: DesktopBrowserBridge,

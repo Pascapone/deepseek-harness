@@ -89,6 +89,13 @@ describe('bundleRoster on a scratch installation', () => {
     expect(linked.roster(['@t/base', '@t/linked'])).toEqual(['@t/theme'])
   })
 
+  it('resolves a bundle self reference from its own manifest', () => {
+    scratch.pkg('@t/self', { dsh: { bundle: { patch: './cordis.patch.yml' }, client: { platform: 'web' } } }, {
+      'cordis.patch.yml': "- insert:\n    - id: self\n      name: '@t/self'\n",
+    })
+    expect(scratch.roster(['@t/self'])).toEqual(['@t/self'])
+  })
+
   it('applies the layers in order and keeps enabled browser rows once, with their dsh.client declaration', () => {
     scratch.web('@t/a', { inject: ['@t/b'], immediately: true })
     scratch.web('@t/b')

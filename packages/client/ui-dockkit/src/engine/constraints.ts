@@ -32,7 +32,7 @@ export function dockPaneCount(state: LayoutState): number {
 
 /**
  * Whether another docked pane is allowed.
- * @param state - current layout.
+ * @param _state - current layout.
  * @returns true; no fixed pane-count limit applies.
  */
 export function canSplit(_state: LayoutState): boolean {

@@ -60,10 +60,14 @@ const installFixture = installDesktopShortcuts as (
   overlayInput: (window: WindowFixture) => { readonly revision: number; readonly blocked: boolean },
 ) => KeyboardFixture
 type GuestsFixture = {
-  acquire(owner: ContentsFixture, workspace: unknown): DesktopBrowserReservation
+  acquire(owner: ContentsFixture, workspace: unknown, sessionId: unknown, tabId: unknown): DesktopBrowserReservation
   release(owner: ContentsFixture, id: unknown): Promise<void>
   bind(window: WindowFixture, attachInput: (guest: ContentsFixture, name: DesktopBrowserLeaseId) => () => void): void
+  resetTarget(owner: ContentsFixture, sessionId: unknown, tabId: unknown): { lease: DesktopBrowserLeaseId; workspace: string }
+  reset(owner: ContentsFixture, id: DesktopBrowserLeaseId): Promise<void>
+  openSessionCdp(sessionId: string): Promise<{ endpoint: string; lease: DesktopBrowserLeaseId; tabId: string }>
 }
+const BrowserGuestsFixture = DesktopBrowserGuests as new (...args: ConstructorParameters<typeof DesktopBrowserGuests>) => GuestsFixture
 
 function desktopDefaults(binding: ShortcutBinding): ShortcutDefinition['defaults'] {
   return { 'desktop:macos': binding, 'desktop:windows': binding, 'desktop:linux': binding }
@@ -200,7 +204,7 @@ it.each([false, true])('blocks approved browser guest input across update overla
     { id: 'page.close', defaults: { 'desktop:macos': { code: 'KeyA', secondCode: 'KeyB', modifiers: [] } } },
     { id: 'sidebar.left.toggle', defaults: desktopDefaults({ code: 'KeyK', modifiers: ['primary'] }) },
   ])
-  const guests = new DesktopBrowserGuests(() => undefined) as GuestsFixture
+  const guests = new BrowserGuestsFixture(() => undefined)
   guests.bind(f.window, (guest, name) => f.keyboard.attachGuest(f.window, guest, name))
   const reservation = guests.acquire(f.contents, 'session:test', 'test-session', 'test-tab')
   const { frame, guest } = browserGuest(reservation)
@@ -712,8 +716,8 @@ it.each(['macos', 'windows'] as const)('requires fresh %s chord presses when Ele
 it('keeps website storage stable across restarts without exposing or merging Workspace paths', async () => {
   const f = await fixture('windows')
   const workspace = 'cwd:C:/private/workspace'
-  const first = new DesktopBrowserGuests(() => undefined).acquire(f.contents, workspace, 'session-a', 'tab-a')
-  const restart = new DesktopBrowserGuests(() => undefined)
+  const first = new BrowserGuestsFixture(() => undefined).acquire(f.contents, workspace, 'session-a', 'tab-a')
+  const restart = new BrowserGuestsFixture(() => undefined)
   const same = restart.acquire(f.contents, workspace, 'session-b', 'tab-b')
   const other = restart.acquire(f.contents, 'cwd:C:/other/workspace', 'session-c', 'tab-c')
   expect(first.partition).toMatch(/^persist:dsh-sidebar-browser-v1-[0-9a-f]{64}$/u)
@@ -723,12 +727,12 @@ it('keeps website storage stable across restarts without exposing or merging Wor
 
 it('resets only the confirmed Workspace partition after revoking its Guests', async () => {
   const f = await fixture('windows')
-  const guests = new DesktopBrowserGuests(() => undefined)
+  const guests = new BrowserGuestsFixture(() => undefined)
   guests.bind(f.window, () => () => {})
   const first = guests.acquire(f.contents, 'cwd:one', 'session-a', 'tab-a')
   const sibling = guests.acquire(f.contents, 'cwd:one', 'session-b', 'tab-b')
   const other = guests.acquire(f.contents, 'cwd:two', 'session-c', 'tab-c')
-  const attached = [first, sibling, other].map(reservation => {
+  const attached = [first, sibling, other].map((reservation) => {
     const { frame, guest } = browserGuest(reservation)
     guest.close.mockImplementation(() => { guest.emit('destroyed') })
     f.contents.emit('will-attach-webview', { preventDefault: vi.fn() }, {}, { src: frame.url, partition: reservation.partition })
@@ -749,7 +753,7 @@ it('resets only the confirmed Workspace partition after revoking its Guests', as
 
 it('refuses ambiguous sibling Guests in one Session instead of selecting a target', async () => {
   const f = await fixture('windows')
-  const guests = new DesktopBrowserGuests(() => undefined)
+  const guests = new BrowserGuestsFixture(() => undefined)
   guests.bind(f.window, () => () => {})
   for (const tabId of ['first', 'second']) {
     const reservation = guests.acquire(f.contents, 'cwd:one', 'same-session', tabId)
@@ -767,7 +771,7 @@ it.each(['macos', 'windows', 'linux'] as const)('routes approved %s browser gues
   const snapshot = await f.call<ShortcutConfigSnapshot>(DESKTOP_IPC.shortcutsGet,
     [{ id: 'browser.new', defaults: desktopDefaults({ code: 'KeyT', modifiers: ['primary'] }) }])
   const ready = vi.fn()
-  const guests = new DesktopBrowserGuests(() => undefined, ready) as GuestsFixture
+  const guests = new BrowserGuestsFixture(() => undefined, ready)
   const attach = vi.fn((guest: ContentsFixture, name: DesktopBrowserLeaseId) => f.keyboard.attachGuest(f.window, guest, name))
   guests.bind(f.window, attach)
   const reservation = guests.acquire(f.contents, 'session:test', 'test-session', 'test-tab')

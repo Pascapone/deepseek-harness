@@ -162,18 +162,21 @@ Registration is a trusted same-process contract. The registry borrows the typed 
 
 ## `ToolRestriction` — one scope's live filter over what it inherits
 
-`ToolRestriction` applies to the tools a scope inherits: the deployment-global layer plus every ancestor scope on its chain. The registry compiles readonly names into private sets, intersects multiple restrictions, then overlays the scope's OWN registrations, which stay exempt so a delegated child keeps the tools it answers through. A deny-only filter admits later unlisted inherited tools, while an allow-list excludes them.
+`ToolRestriction` applies to the tools a scope inherits: the deployment-global layer plus every ancestor scope on its chain. The registry compiles readonly names into private sets and intersects multiple restrictions. A scope's own registrations stay exempt unless that restriction sets `includeOwn: true`; descendant-owned registrations remain exempt. A deny-only filter admits later unlisted inherited tools, while an allow-list excludes them.
 
 ```ts type-equiv
 /**
- * Per-scope filter over global tools. Restrictions intersect and do not affect
- * scoped registrations or the reserved PTC mode transport.
+ * Per-scope filter over inherited tools. Restrictions intersect and preserve
+ * scoped registrations unless `includeOwn` explicitly includes this layer.
+ * The reserved PTC mode transport remains exempt.
  */
 interface ToolRestriction {
   /** Global tool names that stay visible; everything else is removed. */
   readonly allow?: readonly string[]
   /** Global tool names removed from visibility. */
   readonly deny?: readonly string[]
+  /** Also filter registrations in this exact scope (not descendant-owned tools). */
+  readonly includeOwn?: boolean
 }
 ```
 

@@ -101,6 +101,7 @@ interface ClientState {
  * The returned callback retries a blocked Agent after its Guest is attached.
  * @param ctx - provider context supplying browser use, Agents, tools, and prompt assembly.
  * @param options - provider identity, attachment exclusivity, and executable configuration.
+ * @returns retries attachment for a blocked Agent and reports whether tools became available.
  */
 export function mountSessionMcp(ctx: Context, options: SessionMcpOptions): (agent: Agent) => Promise<boolean> {
   let resources!: SessionResources<Scope>

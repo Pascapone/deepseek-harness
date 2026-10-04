@@ -1,7 +1,6 @@
 import { EventEmitter, once } from 'node:events'
 import { expect, it } from 'vitest'
 import { WebSocket } from 'ws'
-import type { WebContents } from 'electron'
 import { openBrowserCdp } from '../src/browser-cdp.ts'
 
 class FakeDebugger extends EventEmitter {
@@ -31,16 +30,21 @@ class FakeGuest extends EventEmitter {
   isDestroyed(): boolean { return this.destroyed }
   destroy(): void { this.destroyed = true; this.emit('destroyed') }
 }
-type Message = { readonly id?: number; readonly method?: string; readonly sessionId?: string;
-  readonly params?: Record<string, unknown>; readonly result?: Record<string, unknown>;
-  readonly error?: { readonly message: string } }
+type Message = {
+  readonly id?: number
+  readonly method?: string
+  readonly sessionId?: string
+  readonly params?: Record<string, unknown>
+  readonly result?: Record<string, unknown>
+  readonly error?: { readonly message: string }
+}
 
 function messages(socket: WebSocket): {
   request(method: string, params?: Record<string, unknown>, sessionId?: string): Promise<Message>
   event(method: string): Promise<Message>
 } {
   const seen: Message[] = []
-  socket.on('message', bytes => { seen.push(JSON.parse(bytes.toString()) as Message) })
+  socket.on('message', (bytes) => { seen.push(JSON.parse(bytes.toString()) as Message) })
   let nextId = 0
   return {
     request(method, params = {}, sessionId) {
@@ -73,7 +77,7 @@ function messages(socket: WebSocket): {
   }
 }
 
-async function rejected(url: string, options: ConstructorParameters<typeof WebSocket>[1]): Promise<number> {
+async function rejected(url: string, options: WebSocket.ClientOptions): Promise<number> {
   return await new Promise<number>((resolve, reject) => {
     const socket = new WebSocket(url, options)
     socket.once('unexpected-response', (_request, response) => { response.resume(); resolve(response.statusCode ?? 0) })
@@ -84,7 +88,7 @@ async function rejected(url: string, options: ConstructorParameters<typeof WebSo
 
 it('exposes only one leased guest, rejects other sockets and targets, and revokes on destruction', async () => {
   const guest = new FakeGuest()
-  const cdp = await openBrowserCdp(guest as unknown as WebContents)
+  const cdp = await openBrowserCdp(guest as Parameters<typeof openBrowserCdp>[0])
   try {
     expect(await rejected(cdp.endpoint, { origin: 'https://evil.example' })).toBe(403)
     expect(await rejected(cdp.endpoint, { headers: { Host: 'evil.example' } })).toBe(403)
@@ -134,12 +138,12 @@ it('exposes only one leased guest, rejects other sockets and targets, and revoke
 
 it('rejects oversized MCP commands without crashing Main or closing the guest', async () => {
   const guest = new FakeGuest()
-  const cdp = await openBrowserCdp(guest as unknown as WebContents)
+  const cdp = await openBrowserCdp(guest as Parameters<typeof openBrowserCdp>[0])
   try {
     const socket = new WebSocket(cdp.endpoint)
     await once(socket, 'open')
     socket.on('error', () => {})
-    const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()))
+    const closed = new Promise<void>(resolve => socket.once('close', () => resolve()))
     socket.send('x'.repeat(8 * 1024 * 1024 + 1))
     await closed
     expect(guest.destroyed).toBe(false)
@@ -149,7 +153,7 @@ it('rejects oversized MCP commands without crashing Main or closing the guest', 
 
 it('Browser.close disconnects CDP without closing the desktop guest', async () => {
   const guest = new FakeGuest()
-  const cdp = await openBrowserCdp(guest as unknown as WebContents)
+  const cdp = await openBrowserCdp(guest as Parameters<typeof openBrowserCdp>[0])
   try {
     const socket = new WebSocket(cdp.endpoint)
     await once(socket, 'open')

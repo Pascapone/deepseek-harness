@@ -22,9 +22,10 @@ A provider advertises its **start-time** features on a static descriptor the ser
  * degradation" rule). These flags describe the ONE-SHOT
  * {@link SubagentProvider.start} path, where the provider composes the child;
  * continuable children are composed by the continuation manager itself and are
- * gated by {@link SubagentProvider.prepareContinuable} instead. Each flag
- * corresponds one-to-one to a {@link SubagentStartRequest} option: `depthLimit`
- * to `maxDepth`; the other names match.
+ * gated by {@link SubagentProvider.prepareContinuable} instead. The optional
+ * `agentPreset` flag is continuable-only. Other flags correspond one-to-one
+ * to {@link SubagentStartRequest} options: `depthLimit` to `maxDepth`;
+ * the other names match.
  */
 interface SubagentCapabilities {
   readonly agentOptions: boolean
@@ -32,6 +33,8 @@ interface SubagentCapabilities {
   readonly depthLimit: boolean
   readonly toolFilter: boolean
   readonly persona: boolean
+  /** Continuable-only: this provider permits the manager to bind a different native preset. */
+  readonly agentPreset?: boolean
 }
 ```
 

@@ -162,18 +162,21 @@ type InferArgs<S> = InferProperties<S, []>
 
 ## `ToolRestriction` — 单个作用域对其继承内容的实时过滤器
 
-`ToolRestriction` 作用于该作用域继承来的工具：部署全局层，加上其链上的每个祖先作用域。注册表将 readonly 名称编译为私有集合，对多个限制取交集，再叠加该作用域**自身**的注册——后者不受约束，因此被委派的子 agent 会保留其回报所依赖的工具。仅 deny 的过滤器允许后续未列出的继承工具通过，而 allow 列表则排除它们。
+`ToolRestriction` 作用于该作用域继承来的工具：部署全局层，加上其链上的每个祖先作用域。注册表将 readonly 名称编译为私有集合，并对多个限制取交集。除非该限制设置 `includeOwn: true`，否则本作用域自身的注册不受约束；后代作用域拥有的注册始终不受此限制约束。仅 deny 的过滤器允许后续未列出的继承工具通过，而 allow 列表则排除它们。
 
 ```ts type-equiv
 /**
- * Per-scope filter over global tools. Restrictions intersect and do not affect
- * scoped registrations or the reserved PTC mode transport.
+ * Per-scope filter over inherited tools. Restrictions intersect and preserve
+ * scoped registrations unless `includeOwn` explicitly includes this layer.
+ * The reserved PTC mode transport remains exempt.
  */
 interface ToolRestriction {
   /** Global tool names that stay visible; everything else is removed. */
   readonly allow?: readonly string[]
   /** Global tool names removed from visibility. */
   readonly deny?: readonly string[]
+  /** Also filter registrations in this exact scope (not descendant-owned tools). */
+  readonly includeOwn?: boolean
 }
 ```
 
