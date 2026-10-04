@@ -69,6 +69,16 @@ it('waits for a mounted container and observes native history, titles and new-ta
   expect(h.bridge.release).toHaveBeenCalledExactlyOnceWith(h.reservation.lease)
 })
 
+it('mounts a blank guest bound to the exact Session and tab before Agent navigation', async () => {
+  const h = fixture()
+  h.mount()
+  const guest = await h.guest()
+  expect(h.bridge.acquire).toHaveBeenCalledExactlyOnceWith('cwd:/workspace', 'test-session', 'test-tab')
+  guest.emit('dom-ready')
+  expect(guest.loadURL).not.toHaveBeenCalled()
+  expect(h.frame.getSnapshot().target).toBeUndefined()
+})
+
 it('releases an acquisition that finishes after attachment cancellation', async () => {
   const h = fixture()
   const pending = Promise.withResolvers<DesktopBrowserReservation>()

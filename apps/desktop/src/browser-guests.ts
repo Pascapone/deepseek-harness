@@ -1,14 +1,19 @@
 /** Main-process ownership and fixed isolation policy for Sidebar webview guests. */
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { app, session, type BrowserWindow, type Session, type WebContents } from 'electron'
 import type { DesktopBrowserLeaseId, DesktopBrowserOpenRequest, DesktopBrowserReservation } from '@deepseek-ai/dsh-client-ui-sidebar-browser/types'
 import { DESKTOP_IPC } from './ipc.ts'
+import { openBrowserCdp } from './browser-cdp.ts'
 
 interface GuestLease {
   readonly owner: WebContents
   readonly partition: string
+  readonly sessionId: string
+  readonly tabId: string
+  readonly workspace: string
   attached: boolean
   guest?: WebContents
+  cdp?: Awaited<ReturnType<typeof openBrowserCdp>>
   releaseInput?: () => void
 }
 
@@ -16,29 +21,96 @@ interface GuestLease {
 export class DesktopBrowserGuests {
   private readonly partitions = new Map<string, string>()
   private readonly leases = new Map<DesktopBrowserLeaseId, GuestLease>()
+  private readonly resetting = new Set<string>()
+  private cdpGeneration = 0
 
   /** @param hostUrl - current authenticated DSH Host, which guests cannot request. */
-  constructor(private readonly hostUrl: () => string | undefined) {}
+  constructor(private readonly hostUrl: () => string | undefined,
+    private readonly onGuestReady?: (sessionId: string) => void) {}
 
   /**
-   * Reserve one guest in a workspace's process-lifetime partition.
+   * Reserve one guest in a workspace's dedicated persistent partition.
    * @param owner - authenticated primary application WebContents.
    * @param workspace - workspace identity received over IPC.
    * @returns opaque lease and the partition approved for it.
    */
-  acquire(owner: WebContents, workspace: unknown): DesktopBrowserReservation {
+  acquire(owner: WebContents, workspace: unknown, sessionId: unknown, tabId: unknown): DesktopBrowserReservation {
     if (typeof workspace !== 'string' || workspace.length === 0 || workspace.length > 4096) {
       throw new Error('desktop browser: a workspace storage identity is required')
     }
+    if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 128
+      || typeof tabId !== 'string' || !tabId || tabId.length > 128) {
+      throw new Error('desktop browser: a Session and tab identity are required')
+    }
     let partition = this.partitions.get(workspace)
     if (partition === undefined) {
-      partition = `dsh-sidebar-browser-${randomUUID()}`
+      partition = `persist:dsh-sidebar-browser-v1-${createHash('sha256').update(workspace).digest('hex')}`
       this.configureSession(session.fromPartition(partition))
       this.partitions.set(workspace, partition)
     }
+    if (this.resetting.has(partition)) throw new Error('desktop browser: Workspace website data is being reset')
     const lease = randomUUID() as DesktopBrowserLeaseId
-    this.leases.set(lease, { owner, partition, attached: false })
+    this.leases.set(lease, { owner, partition, sessionId, tabId, workspace, attached: false })
     return { lease, partition }
+  }
+
+  /** Resolve only the requesting app's exact tab before opening a human confirmation. */
+  resetTarget(owner: WebContents, sessionId: unknown, tabId: unknown): { lease: DesktopBrowserLeaseId; workspace: string } {
+    const matches = [...this.leases].filter(([, value]) => value.owner === owner
+      && value.sessionId === sessionId && value.tabId === tabId)
+    if (matches.length !== 1) throw new Error('desktop browser: expected exactly one owned tab')
+    const [lease, value] = matches[0]!
+    return { lease, workspace: value.workspace }
+  }
+
+  /** Revoke all affected Guests before clearing only their shared website-storage partition. */
+  async reset(owner: WebContents, id: DesktopBrowserLeaseId): Promise<void> {
+    const target = this.leases.get(id)
+    if (target?.owner !== owner) throw new Error('desktop browser: Guest lease expired')
+    const partition = target.partition
+    if (this.resetting.has(partition)) throw new Error('desktop browser: reset already in progress')
+    this.resetting.add(partition)
+    try {
+      for (const [leaseId, value] of [...this.leases]) {
+        if (value.partition === partition) await this.release(value.owner, leaseId)
+      }
+      const storage = session.fromPartition(partition)
+      await storage.clearStorageData()
+      await storage.clearCache()
+    } finally { this.resetting.delete(partition) }
+  }
+
+  /** Give one live Agent a revocable endpoint for its single mounted Sidebar tab. */
+  async openSessionCdp(sessionId: string): Promise<{ endpoint: string; lease: DesktopBrowserLeaseId; tabId: string }> {
+    const matches = [...this.leases].filter(([, lease]) => lease.sessionId === sessionId && lease.guest
+      && !lease.guest.isDestroyed() && !lease.owner.isDestroyed())
+    // ponytail: ambiguous multi-tab Sessions fail closed; add an explicit tab picker if parallel tabs need Agents.
+    if (matches.length !== 1) throw new Error('desktop browser: expected exactly one live Session guest')
+    const [id, lease] = matches[0]!
+    if (lease.cdp !== undefined) throw new Error('desktop browser: Guest already attached to an Agent')
+    const guest = lease.guest!
+    const generation = this.cdpGeneration
+    const cdp = await openBrowserCdp(guest)
+    if (generation !== this.cdpGeneration || this.leases.get(id) !== lease || guest.isDestroyed() || lease.owner.isDestroyed()) {
+      await cdp.close()
+      throw new Error('desktop browser: Guest lease expired')
+    }
+    lease.cdp = cdp
+    void cdp.closed.then(() => { if (lease.cdp === cdp) delete lease.cdp })
+    return { endpoint: cdp.endpoint, lease: id, tabId: lease.tabId }
+  }
+
+  async closeSessionCdp(sessionId: string, id: string): Promise<void> {
+    const lease = this.leases.get(id as DesktopBrowserLeaseId)
+    if (lease?.sessionId !== sessionId) return
+    const cdp = lease.cdp
+    delete lease.cdp
+    await cdp?.close()
+  }
+
+  async closeAllCdp(): Promise<void> {
+    this.cdpGeneration++
+    await Promise.all([...this.leases].map(([id, lease]) => this.closeSessionCdp(lease.sessionId, id)))
   }
 
   /**
@@ -54,6 +126,7 @@ export class DesktopBrowserGuests {
     if (lease.owner !== owner) throw new Error('desktop browser: guest belongs to another window')
     lease.releaseInput?.()
     this.leases.delete(key)
+    if (lease.cdp) await lease.cdp.close()
     const guest = lease.guest
     if (guest !== undefined && !guest.isDestroyed()) {
       const destroyed = new Promise<void>((resolve) => { guest.once('destroyed', resolve) })
@@ -106,6 +179,7 @@ export class DesktopBrowserGuests {
         lease.guest = guest
         attachedLease = id
         lease.releaseInput = attachInput(guest, id)
+        this.onGuestReady?.(lease.sessionId)
         guest.once('destroyed', () => { lease.releaseInput?.(); this.leases.delete(id) })
       })
       guest.setWindowOpenHandler(({ url, postBody }) => {

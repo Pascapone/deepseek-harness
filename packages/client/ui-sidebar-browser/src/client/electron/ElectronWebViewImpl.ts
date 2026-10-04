@@ -1,5 +1,6 @@
 /** Electron navigation and guest lifetime, independent from DOM placement. */
 import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
+import type { TabId } from '@deepseek-ai/dsh-client-ui-dockkit'
 import type { DesktopBrowserBridge, DesktopBrowserLeaseId } from '../../types.ts'
 import type { ElectronWebviewPresentation, WebviewElement } from './ElectronWebviewPresentation.ts'
 import { emptyBrowserFrame, type BrowserFrame, type BrowserFrameState, type BrowserLoadError } from '../browser/BrowserFrame.ts'
@@ -39,7 +40,8 @@ export class ElectronWebViewImpl implements BrowserFrame {
    */
   constructor(private readonly options: BrowserPageOptions, private readonly bridge: DesktopBrowserBridge,
     private readonly workspace: (signal: AbortSignal) => Promise<string>,
-    private readonly presentation: ElectronWebviewPresentation) {
+    private readonly presentation: ElectronWebviewPresentation,
+    private readonly sessionId: string, private readonly tabId: TabId) {
     this.checkpoint = currentBrowserTarget(options.initial)
     this.store = createSnapshotStore(emptyBrowserFrame())
   }
@@ -57,8 +59,8 @@ export class ElectronWebViewImpl implements BrowserFrame {
     if (this.pending !== undefined) {
       this.store.set({ ...this.store.getSnapshot(), address: 'requested', loading: true,
         canGoBack: false, canGoForward: false, error: undefined })
-      this.initialize()
     }
+    this.initialize()
   }
 
   /** Invalidate pending attachment before the containing DOM is removed. */
@@ -144,7 +146,7 @@ export class ElectronWebViewImpl implements BrowserFrame {
   private async createGuest(attachmentSignal: AbortSignal): Promise<void> {
     this.workspaceKey ??= await this.workspace(attachmentSignal)
     if (attachmentSignal.aborted) return
-    const reservation = await this.bridge.acquire(this.workspaceKey)
+    const reservation = await this.bridge.acquire(this.workspaceKey, this.sessionId, this.tabId)
     // oxlint-disable-next-line typescript/no-unnecessary-condition -- The signal can abort while acquire is pending.
     if (attachmentSignal.aborted) { await this.release(reservation.lease); return }
     this.lease = reservation.lease

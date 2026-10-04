@@ -61,16 +61,19 @@ class PresentationRuntime extends PtcRuntime {
   run(): Promise<never> { return Promise.reject(new Error('Unexpected PTC execution in a presentation test')) }
 }
 
-async function load(exclusive = false, mode?: string, toolCallTimeoutMs?: number, toolOrder?: string[]) {
+async function load(exclusive = false, mode?: string, toolCallTimeoutMs?: number, toolOrder?: string[],
+  resolveArgs?: (agent: Agent, signal: AbortSignal) => Promise<{ args: string[]; close(): Promise<void> } | undefined>) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-browser-mcp-'))
   roots.push(root)
   const model = new FixtureModel()
+  let activate: ((agent: Agent) => Promise<boolean>) | undefined
   const modules = new Map<string, unknown>([
     ['browserUse', BrowserUse], ['prompt', SystemPrompt], ['tools', Tools], ['llm', Llm],
     ['sessions', Sessions], ['agents', Agents], ['loop', AgentLoop], ['projections', Projections],
     ['model', { inject: ['llm'], apply(ctx: Context) { ctx.effect(() => ctx.llm.registerAdapter(['fixture'], model)) } }],
     ['browser', { inject: ['browserUse', 'agents', 'tools', 'systemPrompt'], apply(ctx: Context) {
-      mountSessionMcp(ctx, { name: 'browser-fixture', exclusive, command: process.execPath, args: [fixture, root, ...mode === undefined ? [] : [mode]], ...toolCallTimeoutMs === undefined ? {} : { toolCallTimeoutMs, env: {} } })
+      activate = mountSessionMcp(ctx, { name: 'browser-fixture', exclusive, command: process.execPath, args: [fixture, root, ...mode === undefined ? [] : [mode]],
+        ...resolveArgs === undefined ? {} : { resolveArgs }, ...toolCallTimeoutMs === undefined ? {} : { toolCallTimeoutMs, env: {} } })
     } }],
   ])
   const configPath = join(root, 'cordis.yml')
@@ -90,7 +93,7 @@ async function load(exclusive = false, mode?: string, toolCallTimeoutMs?: number
   await ctx.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(configPath).href } })
   await ctx.loader.await()
   const browser = [...ctx.loader.entries()].find(entry => entry.options.id === 'browser')!.fiber!
-  return { ctx, root, model, browser }
+  return { ctx, root, model, browser, activate: (agent: Agent) => activate!(agent) }
 }
 
 async function warm(ctx: Context, agent: Agent, signal = new AbortController().signal) {
@@ -161,6 +164,42 @@ it('waits for SystemPrompt and ToolRuntime before reserving the provider', async
 })
 
 describe('Session MCP Loader composition', () => {
+  it('blocks browser tools without a Guest and revokes an attached endpoint with its Agent', async () => {
+    let root = ''
+    let guest = false
+    const close = vi.fn(async () => {})
+    const loaded = await load(true, undefined, undefined, undefined, async () => guest ? { args: [fixture, root], close } : undefined)
+    root = loaded.root
+    const missing = await loaded.ctx.agents.create({ sessionId: SessionId('missing') })
+    expect(loaded.ctx.tools.schemas(missing.agent)).toEqual([])
+    guest = true
+    expect(loaded.ctx.tools.schemas(missing.agent)).toEqual([])
+    const attached = await loaded.ctx.agents.create({ sessionId: SessionId('attached') })
+    expect(loaded.ctx.tools.schemas(attached.agent).some(tool => tool.name === TOOL)).toBe(true)
+    await attached.dispose()
+    expect(close).toHaveBeenCalledOnce()
+  })
+
+  it('activates an existing empty Session when its native Guest attaches later', async () => {
+    let guest = false
+    let root = ''
+    const close = vi.fn(async () => {})
+    const loaded = await load(true, undefined, undefined, undefined, async () => guest ? { args: [fixture, root], close } : undefined)
+    root = loaded.root
+    const session = await loaded.ctx.agents.create({ sessionId: SessionId('late-guest'),
+      agentOptions: { provider: 'fixture', model: 'fixture' } })
+    expect(loaded.ctx.tools.schemas(session.agent)).toEqual([])
+    expect(await loaded.activate(session.agent)).toBe(false)
+    guest = true
+    expect(await loaded.activate(session.agent)).toBe(true)
+    expect(loaded.ctx.tools.schemas(session.agent).some(tool => tool.name === TOOL)).toBe(true)
+    session.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Visit the fixture.' }], source: { kind: 'user' } }))
+    await session.agent.whenIdle()
+    expect(loaded.model.requests[0]?.tools?.some(tool => tool.name === TOOL)).toBe(true)
+    await session.dispose()
+    expect(close).toHaveBeenCalledOnce()
+  })
+
   it('discovers schemas before the first model request and retains distinct state across turns', async () => {
     const { ctx, root, model, browser } = await load(false, undefined, 5000, [TOOL, '<unlisted-tools>'])
     const first = await ctx.agents.create({ sessionId: SessionId('first'), meta: { cwd: root }, agentOptions: { provider: 'fixture', model: 'fixture' } })

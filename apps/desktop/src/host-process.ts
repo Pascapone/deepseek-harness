@@ -23,7 +23,15 @@ interface PlatformSessionEvent {
   readonly session: PlatformSession | null
 }
 
-type DesktopHostEvent = ReadyEvent | FatalEvent | PlatformSessionEvent | { readonly type: 'shutdown-complete' } | {
+export interface BrowserCdpRequest {
+  readonly type: 'browser-cdp'
+  readonly requestId: number
+  readonly action: 'open' | 'close'
+  readonly sessionId: string
+  readonly lease?: string
+}
+
+type DesktopHostEvent = ReadyEvent | FatalEvent | PlatformSessionEvent | BrowserCdpRequest | { readonly type: 'shutdown-complete' } | {
   readonly type: 'update-tasks'
   readonly requestId: number
   readonly active: boolean
@@ -79,6 +87,12 @@ function isDesktopHostEvent(message: unknown): message is DesktopHostEvent {
     }
     case 'fatal':
       return typeof candidate.message === 'string' && (candidate.diagnostic === undefined || typeof candidate.diagnostic === 'string')
+    case 'browser-cdp':
+      return Number.isSafeInteger(candidate.requestId) && (candidate.requestId as number) > 0
+        && (candidate.action === 'open' || candidate.action === 'close')
+        && typeof candidate.sessionId === 'string' && candidate.sessionId.length > 0 && candidate.sessionId.length <= 128
+        && (candidate.action === 'open' ? candidate.lease === undefined
+          : typeof candidate.lease === 'string' && candidate.lease.length > 0 && candidate.lease.length <= 128)
     case 'update-tasks':
       return Number.isSafeInteger(candidate.requestId) && typeof candidate.active === 'boolean'
         && (candidate.error === undefined || typeof candidate.error === 'string')
@@ -177,6 +191,8 @@ export class DesktopHostProcess {
     private readonly packageManager?: { readonly pnpm: string; readonly nodeBin: string },
 
     private readonly onPlatformSession?: (session: PlatformSession | null) => void,
+    private readonly onBrowserCdp?: (request: BrowserCdpRequest) => Promise<{ endpoint?: string; lease?: string; tabId?: string }>,
+    private readonly onHostClosed?: () => Promise<void>,
   ) {}
 
   /**
@@ -196,7 +212,7 @@ export class DesktopHostProcess {
       ...this.packageManager === undefined ? [] : [this.packageManager.pnpm, this.packageManager.nodeBin],
     ], {
       cwd: this.projectDir,
-      env: desktopNodeEnvironment(this.node, undefined, this.environment),
+      env: { ...desktopNodeEnvironment(this.node, undefined, this.environment), DSH_DESKTOP_RUNTIME_DIR: this.runtimeDir },
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     })
     this.child = child
@@ -211,6 +227,21 @@ export class DesktopHostProcess {
       }
       if (message.type === 'ready') this.readyResolve({ url: message.url, injections: message.injections })
       else if (message.type === 'platform-session') this.onPlatformSession?.(message.session)
+      else if (message.type === 'browser-cdp') {
+        void (async () => {
+          try {
+            if (this.onBrowserCdp === undefined) throw new Error('browser bridge unavailable')
+            const result = await this.onBrowserCdp(message)
+            if (!child.connected) { this.revokeBrowserCdp(); return }
+            child.send({ type: 'browser-cdp-result', requestId: message.requestId, ...result }, (error) => {
+              if (error !== null) this.revokeBrowserCdp()
+            })
+          } catch {
+            if (child.connected) child.send({ type: 'browser-cdp-result', requestId: message.requestId,
+              error: 'native browser Guest unavailable or ambiguous' })
+          }
+        })()
+      }
       else if (message.type === 'shutdown-complete') {
         if (this.stopping) this.shutdownCompleted = true
         else this.fail(new Error('dsh desktop host acknowledged an unrequested shutdown'))
@@ -225,6 +256,7 @@ export class DesktopHostProcess {
     child.once('error', (error) => { this.fail(error) })
     this.exitPromise = new Promise<void>((resolve) => {
       child.once('close', (code) => {
+        this.revokeBrowserCdp()
         const suffix = this.stderr.trim() === '' ? '' : `: ${this.stderr.trim()}`
         if (code !== 0 && code !== null) this.fail(new Error(`dsh desktop host exited with ${String(code)}${suffix}`))
         else this.fail(new Error(`dsh desktop host stopped${suffix}`))
@@ -232,6 +264,17 @@ export class DesktopHostProcess {
       })
     })
     return this.readyPromise
+  }
+
+  /** Announce a Main-verified Guest to its existing Host Agent without exposing the lease. */
+  notifyBrowserGuestReady(sessionId: string): void {
+    const child = this.child
+    if (!child?.connected) return
+    try {
+      child.send({ type: 'browser-guest-ready', sessionId }, (error) => {
+        if (error !== null) console.warn('desktop browser: Guest readiness notification failed')
+      })
+    } catch { console.warn('desktop browser: Guest readiness notification failed') }
   }
 
   /**
@@ -305,6 +348,10 @@ export class DesktopHostProcess {
       // This diagnostic reaches expandable UI; arbitrary plugin stderr can contain credentials.
       throw new DesktopHostUncleanExitError(`desktop update: Host did not complete graceful task teardown (exit ${String(child.exitCode)}, signal ${String(child.signalCode)}, shutdown acknowledged ${String(this.shutdownCompleted)}, graceful deadline exceeded ${String(!graceful)})`)
     }
+  }
+
+  private revokeBrowserCdp(): void {
+    void this.onHostClosed?.().catch(() => { console.error('desktop browser: failed to revoke Host browser endpoints') })
   }
 
   private fail(error: Error): void {

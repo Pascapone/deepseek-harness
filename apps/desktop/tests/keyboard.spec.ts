@@ -14,6 +14,7 @@ import type { DesktopBrowserLeaseId, DesktopBrowserReservation } from '@deepseek
 import { DESKTOP_IPC } from '../src/ipc.ts'
 
 const ipc = vi.hoisted(() => ({ handle: vi.fn(), removeHandler: vi.fn() }))
+const storage = vi.hoisted(() => ({ clearStorageData: vi.fn(async () => {}), clearCache: vi.fn(async () => {}) }))
 const overlays = await vi.hoisted(async () => {
   const { EventEmitter } = await import('node:events')
   class Window extends EventEmitter {
@@ -31,6 +32,7 @@ const overlays = await vi.hoisted(async () => {
 vi.mock('electron', () => ({ ipcMain: ipc, BrowserWindow: overlays.Window, app: { isPackaged: true }, session: { fromPartition: () => ({
   setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn(), setDevicePermissionHandler: vi.fn(),
   setDisplayMediaRequestHandler: vi.fn(), on: vi.fn(), webRequest: { onBeforeRequest: vi.fn() },
+  ...storage,
 }) } }))
 const { installDesktopShortcuts } = await import('../src/keyboard.ts')
 const { DesktopBrowserGuests } = await import('../src/browser-guests.ts')
@@ -200,7 +202,7 @@ it.each([false, true])('blocks approved browser guest input across update overla
   ])
   const guests = new DesktopBrowserGuests(() => undefined) as GuestsFixture
   guests.bind(f.window, (guest, name) => f.keyboard.attachGuest(f.window, guest, name))
-  const reservation = guests.acquire(f.contents, 'session:test')
+  const reservation = guests.acquire(f.contents, 'session:test', 'test-session', 'test-tab')
   const { frame, guest } = browserGuest(reservation)
   const attach = () => {
     const event = { preventDefault: vi.fn() }
@@ -707,14 +709,68 @@ it.each(['macos', 'windows'] as const)('requires fresh %s chord presses when Ele
   }
 })
 
+it('keeps website storage stable across restarts without exposing or merging Workspace paths', async () => {
+  const f = await fixture('windows')
+  const workspace = 'cwd:C:/private/workspace'
+  const first = new DesktopBrowserGuests(() => undefined).acquire(f.contents, workspace, 'session-a', 'tab-a')
+  const restart = new DesktopBrowserGuests(() => undefined)
+  const same = restart.acquire(f.contents, workspace, 'session-b', 'tab-b')
+  const other = restart.acquire(f.contents, 'cwd:C:/other/workspace', 'session-c', 'tab-c')
+  expect(first.partition).toMatch(/^persist:dsh-sidebar-browser-v1-[0-9a-f]{64}$/u)
+  expect(same.partition).toBe(first.partition)
+  expect(other.partition).not.toBe(first.partition)
+})
+
+it('resets only the confirmed Workspace partition after revoking its Guests', async () => {
+  const f = await fixture('windows')
+  const guests = new DesktopBrowserGuests(() => undefined)
+  guests.bind(f.window, () => () => {})
+  const first = guests.acquire(f.contents, 'cwd:one', 'session-a', 'tab-a')
+  const sibling = guests.acquire(f.contents, 'cwd:one', 'session-b', 'tab-b')
+  const other = guests.acquire(f.contents, 'cwd:two', 'session-c', 'tab-c')
+  const attached = [first, sibling, other].map(reservation => {
+    const { frame, guest } = browserGuest(reservation)
+    guest.close.mockImplementation(() => { guest.emit('destroyed') })
+    f.contents.emit('will-attach-webview', { preventDefault: vi.fn() }, {}, { src: frame.url, partition: reservation.partition })
+    f.contents.emit('did-attach-webview', {}, guest)
+    guest.emit('dom-ready')
+    return guest
+  })
+  expect(() => guests.resetTarget(f.contents, 'session-b', 'tab-a')).toThrow()
+  await guests.reset(f.contents, guests.resetTarget(f.contents, 'session-a', 'tab-a').lease)
+  expect(attached[0]!.close).toHaveBeenCalledOnce()
+  expect(attached[1]!.close).toHaveBeenCalledOnce()
+  expect(attached[2]!.close).not.toHaveBeenCalled()
+  expect(storage.clearStorageData).toHaveBeenCalledOnce()
+  expect(storage.clearCache).toHaveBeenCalledOnce()
+  expect(() => guests.resetTarget(f.contents, 'session-a', 'tab-a')).toThrow()
+  expect(guests.resetTarget(f.contents, 'session-c', 'tab-c').lease).toBe(other.lease)
+})
+
+it('refuses ambiguous sibling Guests in one Session instead of selecting a target', async () => {
+  const f = await fixture('windows')
+  const guests = new DesktopBrowserGuests(() => undefined)
+  guests.bind(f.window, () => () => {})
+  for (const tabId of ['first', 'second']) {
+    const reservation = guests.acquire(f.contents, 'cwd:one', 'same-session', tabId)
+    const { frame, guest } = browserGuest(reservation)
+    f.contents.emit('will-attach-webview', { preventDefault: vi.fn() }, {}, { src: frame.url, partition: reservation.partition })
+    f.contents.emit('did-attach-webview', {}, guest)
+    guest.emit('dom-ready')
+  }
+  await expect(guests.openSessionCdp('same-session')).rejects.toThrow('expected exactly one live Session guest')
+  await expect(guests.openSessionCdp('another-session')).rejects.toThrow('expected exactly one live Session guest')
+})
+
 it.each(['macos', 'windows', 'linux'] as const)('routes approved %s browser guest input to its owner and stops delivery before guest destruction', async (platform) => {
   const f = await fixture(platform)
   const snapshot = await f.call<ShortcutConfigSnapshot>(DESKTOP_IPC.shortcutsGet,
     [{ id: 'browser.new', defaults: desktopDefaults({ code: 'KeyT', modifiers: ['primary'] }) }])
-  const guests = new DesktopBrowserGuests(() => undefined) as GuestsFixture
+  const ready = vi.fn()
+  const guests = new DesktopBrowserGuests(() => undefined, ready) as GuestsFixture
   const attach = vi.fn((guest: ContentsFixture, name: DesktopBrowserLeaseId) => f.keyboard.attachGuest(f.window, guest, name))
   guests.bind(f.window, attach)
-  const reservation = guests.acquire(f.contents, 'session:test')
+  const reservation = guests.acquire(f.contents, 'session:test', 'test-session', 'test-tab')
   const { frame, guest } = browserGuest(reservation)
   const rejected = { preventDefault: vi.fn() }
   f.contents.emit('will-attach-webview', rejected, {}, { src: 'about:blank#unknown', partition: reservation.partition })
@@ -724,6 +780,7 @@ it.each(['macos', 'windows', 'linux'] as const)('routes approved %s browser gues
   invalid.emit('dom-ready')
   expect(invalid.close).toHaveBeenCalledExactlyOnceWith({ waitForBeforeUnload: false })
   expect(attach).not.toHaveBeenCalled()
+  expect(ready).not.toHaveBeenCalled()
 
   const approved = { preventDefault: vi.fn() }
   f.contents.emit('will-attach-webview', approved, {}, { src: frame.url, partition: reservation.partition })
@@ -731,6 +788,7 @@ it.each(['macos', 'windows', 'linux'] as const)('routes approved %s browser gues
   f.contents.emit('did-attach-webview', {}, guest)
   guest.emit('dom-ready')
   expect(attach).toHaveBeenCalledExactlyOnceWith(guest, reservation.lease)
+  expect(ready).toHaveBeenCalledExactlyOnceWith('test-session')
   const input = { modifiers: [], type: 'keyDown', code: 'KeyT', key: 't', meta: platform === 'macos',
     control: platform !== 'macos', alt: false, shift: false, isAutoRepeat: false, isComposing: false }
   const preventDefault = vi.fn()

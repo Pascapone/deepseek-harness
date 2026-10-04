@@ -31,8 +31,8 @@ export class ElectronWebviewPresentation implements BrowserPresentation {
   constructor(private readonly events: ElectronPresentationEvents) {}
 
   /** @param viewportId - committed content container. @returns ends attachment and releases its guest. */
-  mount(viewportId: string): () => void {
-    const host = document.getElementById(viewportId)
+  mount(viewportId: string, viewport?: HTMLElement): () => void {
+    const host = viewport ?? document.getElementById(viewportId)
     if (host === null) throw new Error('Electron presentation: content container is not mounted')
     if (this.host !== undefined) this.events.unmounted()
     this.host = host

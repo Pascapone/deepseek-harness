@@ -79,14 +79,18 @@ export interface SessionMcpOptions {
   command: string
   /** Arguments passed directly without a shell. */
   args: string[]
+  /** Optional Agent-bound attachment; undefined blocks only browser tools for this Agent. */
+  resolveArgs?: (agent: Agent, signal: AbortSignal) => Promise<{ args: string[]; close(): Promise<void> } | undefined>
   /** Explicit overrides merged into the MCP client's scrubbed child environment. */
   env?: Record<string, string>
   /** Per-call timeout override; omission retains the MCP client default. */
   toolCallTimeoutMs?: number
 }
 
+class BrowserGuestMissing extends Error {}
+
 interface ClientState {
-  status: 'ready' | 'blocked'
+  status: 'ready' | 'blocked' | 'activating'
   mask?: Scope
 }
 
@@ -94,10 +98,11 @@ interface ClientState {
  * Await one MCP client during each future Agent's creation.
  * A busy attachment leaves that activation without browser tools; its other turns continue.
  * Calls are serialized per Session; unload closes every server before releasing registration.
+ * The returned callback retries a blocked Agent after its Guest is attached.
  * @param ctx - provider context supplying browser use, Agents, tools, and prompt assembly.
  * @param options - provider identity, attachment exclusivity, and executable configuration.
  */
-export function mountSessionMcp(ctx: Context, options: SessionMcpOptions): void {
+export function mountSessionMcp(ctx: Context, options: SessionMcpOptions): (agent: Agent) => Promise<boolean> {
   let resources!: SessionResources<Scope>
   const clients = new Map<Agent, ClientState>()
   const toolPrefix = `mcp__${options.name}__`
@@ -128,10 +133,14 @@ export function mountSessionMcp(ctx: Context, options: SessionMcpOptions): void 
       exclusive: options.exclusive,
       async open(agent, signal) {
         const scope = createScope(ctx, agent)
+        let resolved: Awaited<ReturnType<NonNullable<SessionMcpOptions['resolveArgs']>>> = undefined
         let cancellation: Promise<void> | undefined
         const cancel = (): void => { cancellation = scope.dispose() }
         signal.addEventListener('abort', cancel, { once: true })
         try {
+          signal.throwIfAborted()
+          resolved = await options.resolveArgs?.(agent, signal)
+          if (options.resolveArgs !== undefined && resolved === undefined) throw new BrowserGuestMissing('native browser Guest unavailable')
           signal.throwIfAborted()
           scope.ctx.on('tools/execute', async (exec, next) => {
             if (!exec.name.startsWith(toolPrefix)) return next()
@@ -145,7 +154,7 @@ export function mountSessionMcp(ctx: Context, options: SessionMcpOptions): void 
             transport: 'stdio',
             serverName: options.name,
             command: options.command,
-            args: options.args,
+            args: resolved?.args ?? options.args,
             ...options.env === undefined ? {} : { env: options.env },
             ...agent.session.header.cwd === undefined ? {} : { cwd: agent.session.header.cwd },
             ...options.toolCallTimeoutMs === undefined ? {} : { toolCallTimeoutMs: options.toolCallTimeoutMs },
@@ -155,13 +164,15 @@ export function mountSessionMcp(ctx: Context, options: SessionMcpOptions): void 
           signal.throwIfAborted()
           return {
             value: scope,
-            close() {
+            async close() {
               clients.delete(agent)
-              return scope.dispose()
+              try { await scope.dispose() }
+              finally { await resolved?.close() }
             },
           }
         } catch (error) {
-          await (cancellation ?? scope.dispose())
+          try { await (cancellation ?? scope.dispose()) }
+          finally { await resolved?.close() }
           throw error
         } finally {
           signal.removeEventListener('abort', cancel)
@@ -185,8 +196,13 @@ export function mountSessionMcp(ctx: Context, options: SessionMcpOptions): void 
       refreshBlockedMasks()
       return
     }
-    await resources.get(agent, signal)
+    try { await resources.get(agent, signal) }
+    catch (error) {
+      if (!(error instanceof BrowserGuestMissing)) throw error
+      state.status = 'blocked'
+    }
     clients.set(agent, state)
+    refreshBlockedMasks()
   }, { prepend: true })
   ctx.on('tools/change', refreshBlockedMasks)
   ctx.on('tools/execute', async (exec, next) => {
@@ -213,4 +229,21 @@ export function mountSessionMcp(ctx: Context, options: SessionMcpOptions): void 
     if (agent === undefined || clients.get(agent)?.status === 'ready') return assembly
     return { ...assembly, sections: assembly.sections.filter(section => section.name !== `mcp:${options.name}`) }
   })
+  return async (agent) => {
+    const state = clients.get(agent)
+    if (state?.status !== 'blocked' || !resources.available(agent)) return false
+    state.status = 'activating'
+    try { await resources.get(agent) }
+    catch (error) {
+      state.status = 'blocked'
+      refreshBlockedMasks()
+      if (error instanceof BrowserGuestMissing) return false
+      throw error
+    }
+    state.status = 'ready'
+    const mask = state.mask
+    delete state.mask
+    await mask?.dispose()
+    return true
+  }
 }

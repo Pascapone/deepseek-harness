@@ -79,19 +79,22 @@ export function parseGlobArgs(args: { pattern: string; path?: string }): GlobInp
  * model-controlled value ({@link GlobInput.pattern}, {@link GlobInput.path})
  * is a plain argv element — no shell layer exists, so no quoting applies; the
  * search root rides behind `--` so a leading-dash path can never be parsed as
- * a flag. `--sort=modified` orders by modification time, `--no-ignore
- * --hidden` searches ignored and hidden files, and
- * {@link GLOB_VCS_EXCLUDES} keeps VCS metadata out.
+ * a flag. `--sort=modified` orders by modification time. Unfiltered root
+ * scans (bare and recursive star patterns) honor ignore files to avoid dependency/build trees;
+ * narrower patterns and explicit subtrees include ignored files. Hidden files
+ * remain visible, while {@link GLOB_VCS_EXCLUDES} keeps VCS metadata out.
  *
  * @param input - the validated arguments.
  * @returns the complete ripgrep argument vector (excluding the binary itself).
  */
 export function buildGlobCommand(input: GlobInput): string[] {
+  // ponytail: filtered globs still scan ignored trees; add a second-pass matcher only if those searches also overflow.
+  const unfilteredRoot = (input.pattern === '*' || input.pattern === '**/*') && (input.path === undefined || input.path === '.')
   const parts = [
     '--files',
-    `--glob=${input.pattern}`,
+    ...unfilteredRoot ? [] : [`--glob=${input.pattern}`],
     '--sort=modified',
-    '--no-ignore',
+    ...unfilteredRoot ? [] : ['--no-ignore'],
     '--hidden',
     // Two negated globs per VCS name: the bare form prunes the directory
     // during traversal; the /** form still excludes the contents when the
@@ -305,7 +308,7 @@ export function applyGlobTool(ctx: Context, caps: GlobToolCaps): void {
   const overCapDescription = caps.sampleOverCapGlobResults ? 'is sampled across top-level entries' : 'keeps the first paths'
   const tool = defineTool({
     name: 'glob',
-    description: 'Find files, not directories, whose paths match a glob pattern, including hidden and ignored files. '
+    description: 'Find files, not directories, whose paths match a glob pattern, including hidden and ignored files. Unfiltered root scans (* or **/*) respect ignore files to avoid dependency trees; pass a specific directory in path to include ignored files there. '
       + `Returns up to ${caps.maxResults} paths in modification-time order; a larger result ${overCapDescription} `
       + 'and reports where the complete list was saved.',
     parameters: {

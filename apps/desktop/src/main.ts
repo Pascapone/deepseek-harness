@@ -399,7 +399,8 @@ async function main(): Promise<void> {
   const applicationUrl = `${SCHEME}://app/`
   let hostUrl: string | undefined
   let hostCookie: string | undefined
-  const browserGuests = new DesktopBrowserGuests(() => hostUrl)
+  let announceGuestReady: (sessionId: string) => void = () => {}
+  const browserGuests = new DesktopBrowserGuests(() => hostUrl, sessionId => { announceGuestReady(sessionId) })
   let injections: readonly unknown[] = []
   let welcomeBackend: DesktopWelcomeBackend | undefined
   let reportedLaunch = false
@@ -444,7 +445,12 @@ async function main(): Promise<void> {
     const host = new DesktopHostProcess(resources.node, resources.dsh, activeProject,
       hostInspectPort, { ...hostEnvironment, DSH_CLIENT_VERSION: desktopClientVersion() }, onFailure,
       primaryRuntime,
-      resources, (next) => { platformView.setSession(next) })
+      resources, (next) => { platformView.setSession(next) }, async (request) => {
+         if (request.action === 'open') return browserGuests.openSessionCdp(request.sessionId)
+         await browserGuests.closeSessionCdp(request.sessionId, request.lease!)
+         return {}
+       }, () => browserGuests.closeAllCdp())
+    announceGuestReady = sessionId => { host.notifyBrowserGuestReady(sessionId) }
     return {
       start: async () => {
         const ready = await host.start()
@@ -698,13 +704,25 @@ async function main(): Promise<void> {
     reportFatal(new Error(message), 'web-boot')
   })
 
-  ipcMain.handle(DESKTOP_IPC.browserAcquire, (event, workspace: unknown) => {
+  ipcMain.handle(DESKTOP_IPC.browserAcquire, (event, workspace: unknown, sessionId: unknown, tabId: unknown) => {
     assertProductSender(event)
-    return browserGuests.acquire(event.sender, workspace)
+    return browserGuests.acquire(event.sender, workspace, sessionId, tabId)
   })
   ipcMain.handle(DESKTOP_IPC.browserRelease, (event, lease: unknown) => {
     assertProductSender(event)
     return browserGuests.release(event.sender, lease)
+  })
+  ipcMain.handle(DESKTOP_IPC.browserReset, async (event, sessionId: unknown, tabId: unknown) => {
+    assertProductSender(event)
+    if (isMandatory()) return false
+    const target = browserGuests.resetTarget(event.sender, sessionId, tabId)
+    const result = await ordinaryMessageBox({ type: 'warning', title: locale.messages.browserResetTitle,
+      message: locale.messages.browserResetMessage,
+      detail: locale.messages.browserResetDetail.replace('{workspace}', target.workspace),
+      buttons: [locale.messages.cancel, locale.messages.browserResetConfirm], defaultId: 0, cancelId: 0, noLink: true })
+    if (result.response !== 1 || isMandatory()) return false
+    await browserGuests.reset(event.sender, target.lease)
+    return true
   })
 
   session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ['ws://127.0.0.1/*'] }, (details, callback) => {

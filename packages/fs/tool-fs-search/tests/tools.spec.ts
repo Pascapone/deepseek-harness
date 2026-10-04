@@ -330,7 +330,7 @@ describe('config validation', () => {
 })
 
 describe('command construction (plain argv)', () => {
-  it('glob: fixed rg --files argv with the pattern and paired VCS excludes', () => {
+  it('glob: filtered search includes ignored files and still excludes VCS metadata', () => {
     expect(buildGlobCommand({ pattern: '**/*.ts' })).toEqual([
       '--files',
       '--glob=**/*.ts',
@@ -346,7 +346,7 @@ describe('command construction (plain argv)', () => {
     ])
   })
 
-  it('glob: the search root rides behind -- as a plain element', () => {
+  it('glob: an explicit subtree includes ignored files, with its path behind --', () => {
     expect(buildGlobCommand({ pattern: '*.md', path: 'docs dir' })).toEqual(['--files', '--glob=*.md', '--sort=modified', '--no-ignore', '--hidden',
       '--glob=!**/.git', '--glob=!**/.git/**',
       '--glob=!**/.svn', '--glob=!**/.svn/**',
@@ -355,6 +355,15 @@ describe('command construction (plain argv)', () => {
       '--glob=!**/.jj', '--glob=!**/.jj/**',
       '--glob=!**/.sl', '--glob=!**/.sl/**',
       '--', 'docs dir'])
+  })
+
+  it('glob: unfiltered root scans respect ignore files', () => {
+    for (const args of [{ pattern: '*' }, { pattern: '**/*', path: '.' }]) {
+      const command = buildGlobCommand(args)
+      expect(command).not.toContain('--no-ignore')
+      expect(command.some(part => part.startsWith('--glob='))).toBe(true) // VCS exclusions still apply.
+      expect(command).not.toContain(`--glob=${args.pattern}`)
+    }
   })
 
   it('grep: fixed rg --json argv with the pattern in --regexp= form', () => {

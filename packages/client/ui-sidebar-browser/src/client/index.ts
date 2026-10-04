@@ -41,6 +41,11 @@ export const inject = ['slots', 'locale', 'sidebarRight', 'sidebarRightTabs']
 
 /** Register the Browser type, localized guide entry, body, and title. */
 export function apply(ctx: Context): void {
+  const carrier = (globalThis as typeof globalThis & {
+    dshDesktop?: { readonly protocolVersion: number; readonly browser?: DesktopBrowserBridge }
+  }).dshDesktop
+  const desktop = carrier?.protocolVersion === 1 ? carrier.browser : undefined
+  if ((globalThis as typeof globalThis & { __DSH_NATIVE_BROWSER_HOST__?: boolean }).__DSH_NATIVE_BROWSER_HOST__ && !desktop) return
   const namespace = 'sidebarBrowser'
   const t = ctx.locale.bind(namespace)
   ctx.inject(['shortcuts'], (ctx) => {
@@ -66,10 +71,6 @@ export function apply(ctx: Context): void {
   })
   const store = createBrowserStore()
   const openTabs = ctx.sidebarRight.openTabs
-  const carrier = (globalThis as typeof globalThis & {
-    dshDesktop?: { readonly protocolVersion: number; readonly browser?: DesktopBrowserBridge }
-  }).dshDesktop
-  const desktop = carrier?.protocolVersion === 1 ? carrier.browser : undefined
   ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'ui-sidebar-browser.copy')
   ctx.effect(() => ctx.sidebarRightTabs.register({ ...browserDefinition(t), keepMounted: desktop !== undefined }), 'ui-sidebar-browser.type')
   const installFrames = (scope: Context, factory: (sessionId: BrowserBodyProps['sessionId']) => BrowserPageFactory): void => {
@@ -96,8 +97,8 @@ export function apply(ctx: Context): void {
   }
   if (desktop === undefined) installFrames(ctx, () => createIframePage)
   else ctx.inject(['workspaces'], (scope) => {
-    installFrames(scope, sessionId => options => createElectronPage(options, desktop,
-      signal => browserWorkspace(scope.workspaces.list, sessionId, signal)))
+    installFrames(scope, sessionId => (options, tabId) => createElectronPage(options, desktop,
+      signal => browserWorkspace(scope.workspaces.list, sessionId, signal), sessionId, tabId))
   })
   ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
     name: 'sidebar.right.pane.tab.title', key: BROWSER_ID, store,

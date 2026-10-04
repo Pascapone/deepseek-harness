@@ -1,4 +1,5 @@
 /** Composition of one navigation provider and its presentation. */
+import type { TabId } from '@deepseek-ai/dsh-client-ui-dockkit'
 import type { BrowserPresentation } from '../view/BrowserPresentation.ts'
 import type { BrowserFrame } from './BrowserFrame.ts'
 import type { BrowserTabState } from './BrowserPersistence.ts'
@@ -17,4 +18,4 @@ export interface BrowserPage {
 }
 
 /** Construct an idle provider without attaching DOM; saved navigation waits for an explicit frame command. */
-export type BrowserPageFactory = (options: BrowserPageOptions) => BrowserPage
+export type BrowserPageFactory = (options: BrowserPageOptions, tabId: TabId) => BrowserPage

@@ -96,7 +96,7 @@ describe('ui-sidebar-browser apply', () => {
         initial: undefined, initialUrl: 'https://example.test/', openTab: vi.fn() })
       expect(replacementStore.getSnapshot().byTab[tabId]).toBeDefined()
       expect(firstStore.getSnapshot().byTab[tabId]).toBeUndefined()
-      if (protocolVersion === 1) await vi.waitFor(() => { expect(acquire).toHaveBeenCalledWith('session:session') })
+      if (protocolVersion === 1) await vi.waitFor(() => { expect(acquire).toHaveBeenCalledWith('session:session', 'session', tabId) })
       else expect(host.querySelector('iframe')).not.toBeNull()
       h.openTabs.set([{ sessionId: 'other', tabId }, { sessionId: 'session', tabId: 'other-tab' as TabId }])
       signal.abort()
@@ -158,6 +158,14 @@ describe('ui-sidebar-browser apply', () => {
       h.sidebar.commandTarget.mockReturnValue(undefined)
       expect(h.registry.dispatch(gesture, context, consume).status).toBe('blocked')
     } finally { await h.fiber.dispose() }
+    expect(h.registry.catalog.getSnapshot()).toEqual([])
+  })
+
+  it('hides browser tabs and shortcuts only from Web clients of the Desktop Host', async () => {
+    vi.stubGlobal('__DSH_NATIVE_BROWSER_HOST__', true)
+    const h = await boot('macos', 'web')
+    expect(h.tabs.get(BROWSER_KIND)).toBeUndefined()
+    expect(h.registered).toEqual([])
     expect(h.registry.catalog.getSnapshot()).toEqual([])
   })
 

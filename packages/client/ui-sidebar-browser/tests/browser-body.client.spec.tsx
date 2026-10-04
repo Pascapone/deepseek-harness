@@ -84,9 +84,18 @@ afterEach(async () => {
   lifetimes.clear()
   localStorage.clear()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 describe('BrowserBody', () => {
+  it('offers a Desktop-only, Main-confirmed website-data reset for the owning tab', async () => {
+    const reset = vi.fn(async () => false)
+    vi.stubGlobal('dshDesktop', { browser: { reset } })
+    const mounted = mountBrowser()
+    fireEvent.click(mounted.view.getByRole('button', { name: zh['reset.label'] }))
+    await waitFor(() => { expect(reset).toHaveBeenCalledExactlyOnceWith(SESSION, TAB) })
+  })
+
   it('displays the effective browser refresh accelerator', () => {
     const mounted = mountBrowser(undefined, { refreshShortcut: { id: 'page.refresh' as never,
       label: 'Refresh', aliases: [], binding: null, keys: ['Ctrl', 'R'], aria: 'Control+R',

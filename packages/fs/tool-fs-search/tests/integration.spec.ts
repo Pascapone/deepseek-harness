@@ -49,7 +49,10 @@ describe('search tools over the real subprocess service + the packaged rg', () =
     dir = await mkdtemp(join(tmpdir(), 'dsh-search-int-'))
     await mkdir(join(dir, 'src'), { recursive: true })
     await mkdir(join(dir, '.git'), { recursive: true })
+    await mkdir(join(dir, 'generated'), { recursive: true })
     await mkdir(join(dir, 'spaced dir'), { recursive: true })
+    await writeFile(join(dir, '.gitignore'), 'generated/\n')
+    await writeFile(join(dir, 'generated', 'clutter.ts'), 'const generated = true\n')
     await writeFile(join(dir, 'src', 'alpha.ts'), 'export const alpha = 1\n// TODO: refit alpha\n')
     await writeFile(join(dir, 'src', 'beta.ts'), 'export const beta = 2\n')
     await writeFile(join(dir, 'notes.md'), 'alpha appears here too\n')
@@ -86,6 +89,17 @@ describe('search tools over the real subprocess service + the packaged rg', () =
     it('scopes to a directory search root (path arg)', async () => {
       const result = await call('glob', { pattern: '*.ts', path: 'src' }, agent())
       expect(text(result).split('\n').sort()).toEqual([join('src', 'alpha.ts'), join('src', 'beta.ts')])
+    })
+
+    it('skips ignored generated trees in broad scans, but finds them when scoped', async () => {
+      for (const args of [{ pattern: '*' }, { pattern: '**/*', path: '.' }]) {
+        const result = await call('glob', args, agent())
+        expect(result.isError).toBe(false)
+        expect(text(result)).not.toContain(join('generated', 'clutter.ts'))
+        expect(text(result)).toContain('notes.md')
+      }
+      expect(text(await call('glob', { pattern: '*.ts', path: 'generated' }, agent())))
+        .toBe(join('generated', 'clutter.ts'))
     })
 
     it('reports zero discoveries as No files found', async () => {

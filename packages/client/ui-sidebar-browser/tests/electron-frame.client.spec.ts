@@ -1,8 +1,22 @@
 // @vitest-environment jsdom
 import { expect, it, vi } from 'vitest'
+import type { TabId } from '@deepseek-ai/dsh-client-ui-dockkit'
 import { ElectronWebViewImpl } from '../src/client/electron/ElectronWebViewImpl.ts'
 import { ElectronWebviewPresentation, type WebviewElement } from '../src/client/electron/ElectronWebviewPresentation.ts'
 import type { DesktopBrowserBridge, DesktopBrowserLeaseId } from '../src/types.ts'
+
+it('mounts a native Guest before its retained Sidebar container enters the document', () => {
+  const viewport = document.createElement('div')
+  viewport.id = 'detached-browser-container'
+  const mounted = vi.fn()
+  const unmounted = vi.fn()
+  const presentation = new ElectronWebviewPresentation({ mounted, unmounted })
+  const release = presentation.mount(viewport.id, viewport)
+  expect(document.getElementById(viewport.id)).toBeNull()
+  expect(mounted).toHaveBeenCalledOnce()
+  release()
+  expect(unmounted).toHaveBeenCalledOnce()
+})
 
 it('clears a failed load when the main page retries without a toolbar command', async () => {
   let url = 'about:blank'
@@ -18,7 +32,7 @@ it('clears a failed load when the main page retries without a toolbar command', 
   }
   const presentation = new ElectronWebviewPresentation({ mounted: () =>{  frame.attach() }, unmounted: () =>{  frame.detach() } })
   const frame = new ElectronWebViewImpl({ initial: undefined, persist: vi.fn(), openRequested: vi.fn() },
-    bridge, async () => 'cwd:/workspace', presentation)
+    bridge, async () => 'cwd:/workspace', presentation, 'test-session', 'test-tab' as TabId)
   const createElement = vi.spyOn(presentation, 'createElement').mockReturnValue(element)
   const host = document.createElement('div')
   host.id = 'electron-frame-retry'

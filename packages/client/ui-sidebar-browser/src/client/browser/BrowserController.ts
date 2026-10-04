@@ -57,7 +57,7 @@ export class BrowserController implements HostObservable<BrowserControllerState>
         if (!result.ok) { this.addressFailed(result.reason); return }
         options.openTab(result.target.url)
       },
-    })
+    }, options.tabId)
     this.store = createSnapshotStore({ frame: this.page.frame.getSnapshot(),
       restoreTarget: currentBrowserTarget(this.checkpoint), addressFailure: undefined, addressRevision: 0 })
     this.unsubscribe = this.page.frame.subscribe(() => {

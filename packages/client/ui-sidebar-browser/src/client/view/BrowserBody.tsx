@@ -6,13 +6,14 @@ import {
   IconChevronLeftOutlineRegular,
   IconChevronRightOutlineRegular,
   IconLinkOutlineRegular,
-  IconRefreshOutlineRegular, Tooltip,
+  IconRefreshOutlineRegular, IconTrashOutlineRegular, Tooltip,
   IconRightUpOutlineRegular,
   SHIELD_OUTLINE_PATH,
   ICON_REGULAR_STROKE,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
 import type { BrowserInjected } from '../browser/BrowserController.ts'
+import type { DesktopBrowserBridge } from '../../types.ts'
 import { emptyBrowserFrame } from '../browser/BrowserFrame.ts'
 import { currentBrowserTarget } from '../browser/BrowserPersistence.ts'
 import type { BrowserStore } from '../browser/store.ts'
@@ -54,6 +55,9 @@ export function BrowserBody(props: BrowserBodyProps): ReactNode {
   const viewportId = useId()
   const viewport = useRef<HTMLDivElement | null>(null)
   const [mountEpoch, setMountEpoch] = useState(0)
+  const [resetting, setResetting] = useState(false)
+  const [resetError, setResetError] = useState(false)
+  const reset = (globalThis as typeof globalThis & { dshDesktop?: { browser?: DesktopBrowserBridge } }).dshDesktop?.browser?.reset
   const state = useBrowserState(tab.id)
   const frame = state?.frame ?? EMPTY_FRAME
   const restoreTarget = state === undefined ? currentBrowserTarget(initial.current) : state.restoreTarget
@@ -101,6 +105,14 @@ export function BrowserBody(props: BrowserBodyProps): ReactNode {
         <button type="button" className={css.tool} aria-label={t('external')} title={t('external')} disabled={externalUrl === undefined}
           onClick={externalUrl === undefined ? undefined : () => { window.open(externalUrl, '_blank', 'noopener,noreferrer') }}
         ><IconRightUpOutlineRegular size={14} /></button>
+        {reset !== undefined && <button type="button" className={css.tool}
+          aria-label={t('reset.label')} title={t('reset.label')} disabled={resetting || mountEpoch === 0}
+          onClick={() => {
+            setResetting(true)
+            setResetError(false)
+            void reset(props.sessionId, tab.id).catch(() => { setResetError(true) })
+              .finally(() => { setResetting(false) })
+          }}><IconTrashOutlineRegular size={14} /></button>}
         {sandboxed !== undefined && <button
           type="button"
           className={[css.tool, sandboxed ? '' : css.sandboxOff].join(' ')}
@@ -115,6 +127,7 @@ export function BrowserBody(props: BrowserBodyProps): ReactNode {
         ? t('load.failed.detail', { code: String(error.code), description: error.description })
         : t('load.failed')}</div>}
       {failure !== undefined && <div className={css.failure} role="alert">{t(`error.${failure}`)}</div>}
+      {resetError && <div className={css.failure} role="alert">{t('reset.failed')}</div>}
       <div className={css.content} aria-busy={frame.loading}>
         <div ref={viewport} id={viewportId} className={css.viewport} aria-label={t('type.label')} />
         {restoreTarget !== undefined && <section className={css.restore} aria-label={t('restore.previous')}>
