@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NativeCommandRunner } from '@deepseek-ai/dsh-native-command'
+vi.mock('node:os', async importOriginal => ({ ...await importOriginal<typeof import('node:os')>(), release: () => '6.8.0-generic' }))
 import { OPEN_IN_APP_CATALOG, type OpenInAppApp } from '../src/catalog.ts'
 import {
   execCommand, launchDetachedApp, launchResolved, parseDesktopEntry, parseRegistryDump, resolveInternals,

@@ -151,6 +151,7 @@ it('rejects oversized MCP commands without crashing Main or closing the guest', 
     const closed = new Promise<void>(resolve => socket.once('close', () =>{  resolve() }))
     socket.send('x'.repeat(8 * 1024 * 1024 + 1))
     await closed
+    await cdp.closed
     expect(guest.destroyed).toBe(false)
     expect(guest.debugger.isAttached()).toBe(false)
   } finally { await cdp.close() }
@@ -171,6 +172,7 @@ it('Browser.close disconnects CDP without closing the desktop guest', async () =
     const closed = once(socket, 'close')
     expect((await c.request('Browser.close')).error).toBeUndefined()
     await closed
+    await cdp.closed
     expect(guest.destroyed).toBe(false)
     expect(guest.debugger.isAttached()).toBe(false)
   } finally { await cdp.close() }

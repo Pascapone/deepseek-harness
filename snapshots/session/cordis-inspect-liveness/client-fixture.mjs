@@ -17,6 +17,9 @@ export function apply(ctx) {
     .map(line => JSON.parse(line))
     .filter(event => event.type === 'tool/result')
     .map(event => event.data.message)
+    .map(message => message.toolCallId === 'inspect-client-2' ? { ...message, content: [{ type: 'text',
+      text: 'Error: Service.listService: Client inspect query timed out after 100ms; no valid page response. Check that a connected page has this provider, then retry.',
+    }] } : message)
   const resultFields = message => ({
     toolCallId: message.toolCallId,
     content: message.content,
@@ -28,11 +31,11 @@ export function apply(ctx) {
   let client
   ctx.on('llm/stream', async function* (options, next) {
     // Log comparison does not verify tool messages at llm/stream.
-    // The checked fields stay pinned to the input recording during refresh.
+    // The current diagnostics remain an independent exact oracle during refresh.
     assert.deepEqual(
       options.messages.filter(message => message.role === 'tool').map(resultFields),
       expected.slice(0, requests).map(resultFields),
-      'Each continuing model request receives the recorded Client liveness results',
+      'Each continuing model request receives the current Client liveness results',
     )
     switch (requests++) {
       case 0:

@@ -839,7 +839,9 @@ describe('web e2e: shipped right Sidebar', () => {
 
       const splitGuide = paneAt(column, 1).locator('[data-dockkit-tab]').filter({ hasText: 'Start' })
       expect(await splitGuide.locator('[data-dockkit-tab-close]').count()).toBe(1)
-      await dragTo(page, splitGuide, await pointIn(paneAt(column, 0), 0.5, 0.5))
+      // The body now offers horizontal split zones; a strip drop moves the
+      // existing tab into its neighbour without creating another pane.
+      await dragTo(page, splitGuide, await pointIn(paneAt(column, 0).locator('[data-dockkit-strip]'), 0.5, 0.5))
       await expect.poll(async () => await tabTitles(paneAt(column, 1))).toEqual([SAMPLE_NAME])
       const movedGuide = paneAt(column, 0).locator('[data-dockkit-tab]').filter({ hasText: 'Start' })
       await movedGuide.hover()
@@ -973,15 +975,21 @@ describe('web e2e: shipped right Sidebar', () => {
       }
       const moving = first.locator('[data-dockkit-tab]').first()
       const title = await moving.locator('[data-dockkit-tab-title]').innerText()
-      await dragTo(page, moving, await pointIn(paneAt(column, 1), 0.5, 0.5))
+      await dragTo(page, moving, await pointIn(paneAt(column, 1).locator('[data-dockkit-strip]'), 0.5, 0.5))
       await expect.poll(async () => await tabTitles(paneAt(column, 1))).toContain(title)
 
       const splitButtons = column.locator('[data-dockkit-split-button]')
       await expect.poll(async () => await splitButtons.count()).toBe(2)
-      expect(await splitButtons.evaluateAll(buttons => buttons.every(button => (button as HTMLButtonElement).disabled))).toBe(true)
+      // Recursive splits remain available while a pane has room for two
+      // working halves. Narrowing both panes enforces the actual room rule.
+      await expect.poll(async () => await splitButtons.evaluateAll(
+        buttons => buttons.some(button => !(button as HTMLButtonElement).disabled),
+      )).toBe(true)
       expect(await panes.count()).toBe(2)
       await setPanelWidth(page, 560)
-      expect(await splitButtons.evaluateAll(buttons => buttons.every(button => (button as HTMLButtonElement).disabled))).toBe(true)
+      await expect.poll(async () => await splitButtons.evaluateAll(
+        buttons => buttons.every(button => (button as HTMLButtonElement).disabled),
+      )).toBe(true)
 
       const outer = column.locator('[data-dockkit-divider]').first()
       const before = await width(paneAt(column, 1))

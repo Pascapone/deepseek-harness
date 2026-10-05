@@ -416,13 +416,14 @@ describe('native file manager', () => {
     await expect(revealNativePath('/file', AbortSignal.abort(new Error('cancelled')), { run })).rejects.toThrow('cancelled')
     expect(run).not.toHaveBeenCalled()
     await expect(revealNativePath('/file', signal(), { platform: 'darwin', run })).rejects.toThrow('desktop failed')
-    expect(nativeFileManager()).toBe(process.platform === 'darwin' ? 'finder' : process.platform === 'win32' ? 'explorer' : 'directory')
+    const wsl = Boolean(process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP || osRelease().toLowerCase().includes('microsoft'))
+    expect(nativeFileManager()).toBe(process.platform === 'darwin' ? 'finder' : process.platform === 'win32' || wsl ? 'explorer' : 'directory')
   })
 })
 
 
 it('uses the native runner for a file-manager handoff when none is injected', async () => {
-  execFileMock.mockImplementation((_command, _args, _options, callback) => { callback(null, '', '') })
+  execFileMock.mockImplementation((command, _args, _options, callback) => { callback(null, command === 'wslpath' ? 'C:\\report.txt' : '', '') })
   await revealNativePath('/tmp/report.txt', signal())
   expect(execFileMock).toHaveBeenCalled()
 })

@@ -15,7 +15,7 @@
     - text: Files
     - button "Close"
   - button "New tab"
-  - button "Split" [disabled]
+  - button "Split"
 - text: {{cwd}}/workspace
 - button "Reload"
 - list:

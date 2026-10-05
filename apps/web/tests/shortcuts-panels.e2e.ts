@@ -201,12 +201,11 @@ describe.skipIf(process.platform === 'win32')('Web sidebar shortcuts', () => {
       const right = panel.locator('[data-dockkit-pane][data-dockkit-column="1"]')
       expect(await right.evaluate(pane => document.activeElement === pane)).toBe(true)
       expect(await paneAppearance()).toEqual([plainPane, plainPane])
-      const disabled = right.locator('[data-dockkit-split-button]')
-      expect(await disabled.isDisabled()).toBe(true)
-      await disabled.locator('..').focus()
+      const splitAgain = right.locator('[data-dockkit-split-button]')
+      expect(await splitAgain.isEnabled()).toBe(true)
+      await splitAgain.focus()
       const splitKeys = primary === 'Meta' ? '⇧ ⌘ ,' : 'Ctrl + Shift + ,'
-      await page.getByRole('tooltip', { name: `One vertical split is the limit ${splitKeys}`, exact: true }).waitFor()
-
+      await page.getByRole('tooltip', { name: `Split ${splitKeys}`, exact: true }).waitFor()
       await bind(page, primary, 'Workspace files', 'Split')
       await right.getByRole('tab').focus()
       await page.keyboard.press(`${primary}+Shift+,`)

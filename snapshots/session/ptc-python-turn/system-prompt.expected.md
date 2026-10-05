@@ -522,7 +522,7 @@ class Tools(Protocol):
     async def get_goal(self, args: dict[str, Any]) -> GetGoalOutput1 | GetGoalOutput2:
         """Read the current session goal, including the id and revision that update_goal requires."""
     async def glob(self, args: GlobArgs) -> GlobOutput:
-        """Find files, not directories, whose paths match a glob pattern, including hidden and ignored files. Returns up to 100 paths in modification-time order; a larger result keeps the first paths and reports where the complete list was saved."""
+        """Find files, not directories, whose paths match a glob pattern, including hidden and ignored files. Unfiltered root scans (* or **/*) respect ignore files to avoid dependency trees; pass a specific directory in path to include ignored files there. Returns up to 100 paths in modification-time order; a larger result keeps the first paths and reports where the complete list was saved."""
     async def grep(self, args: GrepArgs) -> GrepOutput:
         """Search file contents with a ripgrep regular expression. Returns matching lines with line numbers, grouped by file. Returns up to 250 matches; a larger result reports where the complete match list was saved."""
     async def interrupt_agent(self, args: InterruptAgentArgs) -> InterruptAgentOutput:

@@ -47,9 +47,10 @@ it.skipIf(!gioAvailable)('queries and launches an installed Linux desktop entry 
     void task.then(() => active.delete(task), () => active.delete(task))
     return task
   }
-  const apps = await nativeFileApplications(path, lifetime.signal, { run, env })
+  const facts = { run, env: { ...env, WSL_DISTRO_NAME: '', WSL_INTEROP: '' }, osRelease: '6.8.0-generic' }
+  const apps = await nativeFileApplications(path, lifetime.signal, facts)
   expect(apps).toContainEqual({ id: desktop, name: 'DSH Test Handler', default: true, icon: null })
-  await openNativeFileApplication(path, desktop, lifetime.signal, { run, env })
+  await openNativeFileApplication(path, desktop, lifetime.signal, facts)
   let opened: { path: string; pid: number } | undefined
   await vi.waitFor(async () => {
     opened = JSON.parse(await readFile(marker, 'utf8')) as { path: string; pid: number }

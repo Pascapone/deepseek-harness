@@ -9,7 +9,7 @@
     - text: bash
     - button "Close"
   - button "New tab"
-  - button "Split" [disabled]
+  - button "Split"
   - button "Exit fullscreen"
   - button "Collapse right sidebar"
 - textbox "Terminal"
@@ -18,7 +18,7 @@
     - text: Files
     - button "Close"
   - button "New tab"
-  - button "Split" [disabled]
+  - button "Split"
 - text: {{cwd}}/workspace
 - button "Reload"
 - list:

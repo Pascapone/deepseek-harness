@@ -47,6 +47,9 @@ export async function apply(ctx) {
     .map(line => JSON.parse(line))
     .filter(event => event.type === 'tool/result')
     .map(event => event.data.message)
+    .map(message => ({ ...message, content: [{ type: 'text', text: message.toolCallId === 'inspect-client-1'
+      ? 'Error: Service.listService: no catalogued Service named "remote"'
+      : 'Error: Service.listService: Client inspect query timed out after 100ms; no valid page response. Check that a connected page has this provider, then retry.' }] }))
   const resultFields = message => ({
     toolCallId: message.toolCallId,
     content: message.content,
@@ -56,11 +59,11 @@ export async function apply(ctx) {
   ctx.on('llm/stream', (options, next) => {
     assert.equal(ctx.typertGateway.hasLiveClient(), true)
     // Log comparison does not verify tool messages at llm/stream.
-    // The checked fields stay pinned to the input recording during refresh.
+    // The current diagnostics remain an independent exact oracle during refresh.
     assert.deepEqual(
       options.messages.filter(message => message.role === 'tool').map(resultFields),
       expected.slice(0, requests++).map(resultFields),
-      'Each continuing model request receives the recorded Client timeout errors',
+      'Each continuing model request receives the current Client timeout errors',
     )
     return next()
   })

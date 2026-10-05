@@ -107,7 +107,7 @@ interface ToolArgsMap {
   } & Record<string, JsonValue>;
   /** Read the current session goal, including the id and revision that update_goal requires. */
   get_goal: Record<string, JsonValue>;
-  /** Find files, not directories, whose paths match a glob pattern, including hidden and ignored files. Returns up to 100 paths in modification-time order; a larger result keeps the first paths and reports where the complete list was saved. */
+  /** Find files, not directories, whose paths match a glob pattern, including hidden and ignored files. Unfiltered root scans (* or **\/*) respect ignore files to avoid dependency trees; pass a specific directory in path to include ignored files there. Returns up to 100 paths in modification-time order; a larger result keeps the first paths and reports where the complete list was saved. */
   glob: {
     /** Glob pattern to match file paths against (e.g. "**\/*.ts", "src/**\/*.test.js"). A pattern with no "/" matches the basename at any depth, so "*" and "*.ts" both search the whole tree; include a separator to anchor the depth. */
     pattern: string;
