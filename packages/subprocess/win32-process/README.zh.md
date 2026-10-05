@@ -32,7 +32,7 @@ kind: "package-library"
 - **ordinary 结算操作** — `pollProcessExit()` 单独发布 direct exit，`isJobEmpty()` 则读取 `QueryInformationJobObject(JobObjectBasicAccountingInformation)`，直到 `ActiveProcesses` 归零。带检查的 Job 终止与句柄关闭使 runner 保持唯一 native owner。
 - **显式结算归属** — `waitForProcessExit()` 等待并关闭沙箱 process 句柄；ordinary runner 的 process polling、Job accounting 与 checked Job termination/closure 是独立操作。`drainPipe()` 在排空期间复用一个 native count slot，释放该分配并关闭管道读取句柄。每个调用方拥有自己的 result 组合与返回句柄。
 
-进程创建在目标代码运行前设置 `STARTF_USESHOWWINDOW` 和 `SW_HIDE`。它保留控制台继承，不添加可能导致受限令牌下 DLL 初始化失败的 `CREATE_NO_WINDOW` 或 `CREATE_NEW_CONSOLE`。已有的父进程控制台窗口不会被隐藏。
+进程创建在目标代码运行前设置 `STARTF_USESHOWWINDOW` 和 `SW_HIDE`。ordinary Job target 使用 `CREATE_NEW_CONSOLE`，因此即使调用方拥有可见窗口，其后代也继承隐藏的控制台。restricted-token target 保留控制台继承，不添加可能导致该令牌下 DLL 初始化失败的 `CREATE_NO_WINDOW` 或 `CREATE_NEW_CONSOLE`。已有的父进程控制台窗口不会被隐藏。
 
 Windows ACL 沙箱在这些原语上增加 SID、DACL、grant、workspace 与公共 child 策略。
 

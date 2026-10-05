@@ -25,7 +25,7 @@ describe.skipIf(process.platform !== 'win32')('Windows Electron console signals'
     const programFiles = process.env['ProgramFiles(x86)']
     if (programFiles === undefined || process.env.ComSpec === undefined) throw new Error('Windows compiler environment is unavailable')
     const vswhere = join(programFiles, 'Microsoft Visual Studio', 'Installer', 'vswhere.exe')
-    const vs = (await execute(vswhere, ['-latest', '-products', '*', '-requires',
+    const vs = (await execute(vswhere, ['-latest', '-prerelease', '-products', '*', '-requires',
       'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-property', 'installationPath'], { windowsHide: true })).stdout.trim()
     const quote = (value: string) => '"' + value.replaceAll('%', '%%') + '"'
     probe = join(root, 'console-probe.exe')

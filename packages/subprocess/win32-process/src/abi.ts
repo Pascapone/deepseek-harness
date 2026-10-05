@@ -14,6 +14,8 @@ export const INFINITE = 0xFFFFFFFF
 export const WAIT_TIMEOUT = 258
 /** CreateProcess flag that prevents user code from running before resume. */
 export const CREATE_SUSPENDED = 0x4
+/** Ordinary console targets own a hidden console instead of inheriting the caller's window. */
+export const CREATE_NEW_CONSOLE = 0x10
 /** CreateProcess flag selecting a UTF-16 environment block. */
 export const CREATE_UNICODE_ENVIRONMENT = 0x400
 /** GetStdHandle selector for standard input. */

@@ -18,6 +18,7 @@ int wmain()
   P(offsetof(PROCESS_INFORMATION, hThread));
   P(offsetof(PROCESS_INFORMATION, dwProcessId));
   P(CREATE_SUSPENDED);
+  P(CREATE_NEW_CONSOLE);
   P(CREATE_UNICODE_ENVIRONMENT);
   P(STARTF_USESTDHANDLES);
   P(STARTF_USESHOWWINDOW);
@@ -45,6 +46,7 @@ int wmain()
   static_assert(sizeof(PROCESS_INFORMATION) == 24, "PROCESS_INFORMATION size");
   static_assert(sizeof(HANDLE) == 8, "HANDLE size");
   static_assert(CREATE_SUSPENDED == 0x4, "suspended process flag");
+  static_assert(CREATE_NEW_CONSOLE == 0x10, "separate console flag");
   static_assert(CREATE_UNICODE_ENVIRONMENT == 0x400, "Unicode environment flag");
   static_assert(STARTF_USESTDHANDLES == 0x100, "std handles flag");
   static_assert(STARTF_USESHOWWINDOW == 0x1, "initial window visibility flag");
