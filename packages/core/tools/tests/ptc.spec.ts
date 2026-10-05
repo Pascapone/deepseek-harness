@@ -2114,7 +2114,7 @@ describe('per-agent presentation', () => {
     const { scope, agent } = await mintAgentScope(ctx)
     const dispose = scope.ctx.tools.presentAs('ptc')
 
-    dispose()
+    await dispose()
 
     const assembly = await systemPrompt.assemble({ scope: agent })
     expect(assembly.tools.map(tool => tool.name)).toEqual(['echo'])

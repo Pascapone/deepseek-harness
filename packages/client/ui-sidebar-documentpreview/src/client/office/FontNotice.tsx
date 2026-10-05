@@ -53,8 +53,8 @@ export function FontNotice({ fonts, t }: FontNoticeProps): ReactNode {
       onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeDetails() } }}
       onBlur={(event) => {
         if (event.relatedTarget !== null && 'nodeType' in event.relatedTarget
-          && !event.currentTarget.contains(event.relatedTarget as Node)
-          && !anchor.current?.contains(event.relatedTarget as Node)) setExpanded(false)
+          && !event.currentTarget.contains(event.relatedTarget)
+          && !anchor.current?.contains(event.relatedTarget)) setExpanded(false)
       }}>
       <div className={css.panelHeader}>
         <h3 id={`${id}-title`}>{t('missingFontsTitle')}</h3>

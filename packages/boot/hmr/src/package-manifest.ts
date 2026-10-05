@@ -313,6 +313,8 @@ export class PackageManifests {
       exports: normalizePackageJsonField(fields.exports),
       imports: normalizePackageJsonField(fields.imports),
     }
+    // Node's deserialized package reader exposes a null-prototype data object.
+    Object.setPrototypeOf(data, null)
     const serializePackageJsonField = (value: unknown): string | undefined =>
       value === undefined ? undefined : typeof value === 'string' ? value : JSON.stringify(value)
     return {

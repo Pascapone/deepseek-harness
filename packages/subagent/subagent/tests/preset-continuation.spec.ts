@@ -70,18 +70,18 @@ it('binds a different native preset before the first child request and retains i
       toolFilter: { deny: ['privileged'] },
       agentOptions: { provider: 'mock', model: 'mock' } }, signal: new AbortController().signal })
   expect(observed[0]).toEqual({ id: started.childId, preset: 'reviewing', tools: ['reviewing_only'] })
-  await vi.waitFor(() => expect(ctx.agents.get(started.childId)).toBeUndefined())
+  await vi.waitFor(() =>{  expect(ctx.agents.get(started.childId)).toBeUndefined() })
   expect(adapter.requests[0]?.tools?.map(tool => tool.name)).toEqual(['reviewing_only'])
   await ctx.agentPresets.recompose(parent.ctx, 'coding')
   await continuationManager(ctx).queuePrompt(parent, started.childId, [{ type: 'text', text: 'Follow up' }], { kind: 'user' }, new AbortController().signal)
   expect(observed[1]).toEqual({ id: started.childId, preset: 'reviewing', tools: ['reviewing_only'] })
-  await vi.waitFor(() => expect(ctx.agents.get(started.childId)).toBeUndefined())
+  await vi.waitFor(() =>{  expect(ctx.agents.get(started.childId)).toBeUndefined() })
   expect(adapter.requests.slice(0, 4).map(request => request.tools?.map(tool => tool.name)))
     .toEqual([['reviewing_only'], ['coding_only'], ['reviewing_only'], ['coding_only']])
   const fork = await ctx.subagents.startContinuable({ provider: 'fork', label: 'native fork',
     request: { parent, prompt: [{ type: 'text', text: 'Continue here' }],
       agentOptions: { provider: 'mock', model: 'mock' } }, signal: new AbortController().signal })
-  await vi.waitFor(() => expect(ctx.agents.get(fork.childId)).toBeUndefined())
+  await vi.waitFor(() =>{  expect(ctx.agents.get(fork.childId)).toBeUndefined() })
   expect(observed[2]?.tools).toEqual(['coding_only'])
   await ctx.agentPresets.recompose(parent.ctx, 'reviewing')
   await continuationManager(ctx).queuePrompt(parent, fork.childId, [{ type: 'text', text: 'Same fork again' }],

@@ -57,7 +57,8 @@ export function BrowserBody(props: BrowserBodyProps): ReactNode {
   const [mountEpoch, setMountEpoch] = useState(0)
   const [resetting, setResetting] = useState(false)
   const [resetError, setResetError] = useState(false)
-  const reset = (globalThis as typeof globalThis & { dshDesktop?: { browser?: DesktopBrowserBridge } }).dshDesktop?.browser?.reset
+  const desktopBrowser = (globalThis as typeof globalThis & { dshDesktop?: { browser?: DesktopBrowserBridge } }).dshDesktop?.browser
+  const reset = desktopBrowser?.reset?.bind(desktopBrowser)
   const state = useBrowserState(tab.id)
   const frame = state?.frame ?? EMPTY_FRAME
   const restoreTarget = state === undefined ? currentBrowserTarget(initial.current) : state.restoreTarget

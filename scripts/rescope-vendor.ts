@@ -478,11 +478,39 @@ function skipped(file: string, pattern: Pattern): boolean {
   return GENERIC_SKIPS.some(skip => skip.file === file && skip.upstream.includes(pattern.upstream))
 }
 
+const PRESET_ID_FILES = new Set([
+  'apps/web/tests/agent-preset-selection.e2e.ts',
+  'apps/web/tests/developer-tools-settings.e2e.ts',
+  'packages/client/ui-agent-preset/src/client/CreatePluginMenuItem.tsx',
+  'packages/client/ui-agent-preset/tests/components.client.spec.tsx',
+  'packages/client/ui-agent-preset/tests/create-plugin-menu-item.client.spec.tsx',
+  'packages/client/ui-agent-preset/tests/section-store.client.spec.ts',
+  'packages/bundle/web-app/cordis.patch.yml',
+  'docs/subsystems/schedule.md', 'docs/subsystems/schedule.zh.md',
+  'docs/user/guide/schedule.md', 'docs/user/guide/schedule.zh.md',
+  'docs/upgrade-guide/v0.2.0-rc.2/schedule-bundle-retired/guide.md',
+  'docs/upgrade-guide/v0.2.0-rc.2/schedule-bundle-retired/guide.zh.md',
+])
+const INSPECT_EVENT_FILES = new Set([
+  'packages/extensions/cordis-host-runner/tests/inspect-registry.spec.ts',
+  'snapshots/session/cordis-inspect-liveness/client-fixture.mjs',
+  'snapshots/session/cordis-inspect-timeout/client-fixture.mjs',
+])
+
+function isRuntimeToken(file: string, token: string, prefix: string): boolean {
+  // Module references remain checked even beside product identifiers.
+  if (/(?:\bfrom\s*|\b(?:import|require)\s*\(\s*|^\s*import\s*)$/u.test(prefix)) return false
+  return (token === 'cordis' && PRESET_ID_FILES.has(file))
+    || (INSPECT_EVENT_FILES.has(file) && (token === 'cordis/inspect-query' || token === 'cordis/inspect-query-resolved'))
+}
+
 function rewriteLine(line: string, file: string, all: readonly Pattern[]): string {
   let out = line
   for (const pattern of all) {
     if (skipped(file, pattern)) continue
-    out = out.replace(pattern.token, (_match, quote: string, subpath: string) => `${quote}${pattern.to}${subpath}${quote}`)
+    out = out.replace(pattern.token, (match: string, quote: string, subpath: string, offset: number) =>
+      isRuntimeToken(file, `${pattern.from}${subpath}`, out.slice(0, offset))
+        ? match : `${quote}${pattern.to}${subpath}${quote}`)
     out = out.replace(pattern.yamlName, (_match, prefix: string, suffix: string) => `${prefix}${pattern.to}${suffix}`)
   }
   return out
@@ -517,6 +545,16 @@ function rewrite(text: string, file: string, all: readonly Pattern[]): { text: s
     return next
   })
   return { text: out.join('\n'), lines }
+}
+
+/**
+ * Apply package-name mapping while preserving declared product identifiers.
+ * @param source - Current file text.
+ * @param file - Repository-relative path with forward slashes.
+ * @returns Rewritten text; imports remain eligible beside runtime identifiers.
+ */
+export function rewriteRescopeSource(source: string, file: string): string {
+  return rewrite(source, file, patterns(false)).text
 }
 
 function classify(file: string): string {

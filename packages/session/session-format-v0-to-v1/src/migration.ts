@@ -87,7 +87,7 @@ function normalizeReleasedV0Event(
   sessionId: string,
   state: LegacyNormalizationState,
 ): SessionFormatEvent {
-  const named = normalizeLegacyCompactionType(event)
+  const named = normalizeLegacyDescriptor(normalizeLegacyCompactionType(event))
   assertSupportedLegacyType(named, sessionId)
   const start = normalizeLegacyTurnStart(named, sessionId)
   const end = normalizeLegacyTurnEnd(start, sessionId)
@@ -100,6 +100,16 @@ function normalizeReleasedV0Event(
   const messageId = eventMessageId(message)
   if (messageId !== undefined) state.messageIds.set(message.seq, messageId)
   return message
+}
+
+function normalizeLegacyDescriptor(event: SessionFormatEvent): SessionFormatEvent {
+  if (event.type !== 'subagent/descriptor') return event
+  const data = releasedV0Record(event.data, `subagent/descriptor ${event.seq} data`)
+  if (data['version'] !== 2) return event
+  // Descriptor v3 adds only optional reasoning effort; v2 preserves its absent value.
+  assertReleasedV0Keys(data, ['mode', 'version', 'provider'],
+    ['label', 'agentProvider', 'agentModel', 'persona', 'toolFilter'], `subagent/descriptor ${event.seq} v2 data`)
+  return { ...event, data: { ...data, version: 3 } }
 }
 
 function normalizeLegacyCompactionType(event: SessionFormatEvent): SessionFormatEvent {

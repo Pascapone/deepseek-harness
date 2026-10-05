@@ -39,19 +39,24 @@ type Message = {
   readonly error?: { readonly message: string }
 }
 
+function parseMessage(data: WebSocket.RawData): Message {
+  const bytes = Buffer.isBuffer(data) ? data : Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data)
+  return JSON.parse(bytes.toString('utf8')) as Message
+}
+
 function messages(socket: WebSocket): {
   request(method: string, params?: Record<string, unknown>, sessionId?: string): Promise<Message>
   event(method: string): Promise<Message>
 } {
   const seen: Message[] = []
-  socket.on('message', (bytes) => { seen.push(JSON.parse(bytes.toString()) as Message) })
+  socket.on('message', (bytes) => { seen.push(parseMessage(bytes)) })
   let nextId = 0
   return {
     request(method, params = {}, sessionId) {
       const id = ++nextId
       const result = new Promise<Message>((resolve) => {
         const receive = (bytes: WebSocket.RawData): void => {
-          const value = JSON.parse(bytes.toString()) as Message
+          const value = parseMessage(bytes)
           if (value.id !== id) return
           socket.off('message', receive)
           resolve(value)
@@ -66,7 +71,7 @@ function messages(socket: WebSocket): {
       if (existing !== undefined) return Promise.resolve(existing)
       return new Promise<Message>((resolve) => {
         const receive = (bytes: WebSocket.RawData): void => {
-          const value = JSON.parse(bytes.toString()) as Message
+          const value = parseMessage(bytes)
           if (value.method !== method) return
           socket.off('message', receive)
           resolve(value)
@@ -143,7 +148,7 @@ it('rejects oversized MCP commands without crashing Main or closing the guest', 
     const socket = new WebSocket(cdp.endpoint)
     await once(socket, 'open')
     socket.on('error', () => {})
-    const closed = new Promise<void>(resolve => socket.once('close', () => resolve()))
+    const closed = new Promise<void>(resolve => socket.once('close', () =>{  resolve() }))
     socket.send('x'.repeat(8 * 1024 * 1024 + 1))
     await closed
     expect(guest.destroyed).toBe(false)

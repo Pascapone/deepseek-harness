@@ -368,7 +368,7 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
         // button inside an error strip) and a list with no enabled row keep the
         // browser's traversal instead of being swallowed.
         if (insideList) {
-          if (focused?.nodeType === 1 && (focused as Element).getAttribute('role') === 'menuitem') {
+          if (focused?.nodeType === 1 && focused.getAttribute('role') === 'menuitem') {
             e.preventDefault()
             selectingWithTab.current = true
             try { (focused as HTMLElement).click() }

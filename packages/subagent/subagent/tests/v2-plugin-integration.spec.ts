@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, type Plugin } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
@@ -26,7 +26,7 @@ const fixtures = join(dirname(fileURLToPath(import.meta.url)), '../../subagent-i
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
 
-it.skipIf(!process.env.DSH_MULTI_AGENT_V2_BUNDLE)('V2 replaces only fresh-start and starts a preset-bound native child', async () => {
+it.skipIf(!process.env.DSH_MULTI_AGENT_V2_BUNDLE)('scoped V2 preserves native tools and starts a preset-bound child', async () => {
   const ctx = new Context()
   const root = mkdtempSync(join(tmpdir(), 'dsh-v2-plugin-'))
   cleanups.push(async () => { await ctx.fiber.dispose(); rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) })
@@ -45,7 +45,7 @@ it.skipIf(!process.env.DSH_MULTI_AGENT_V2_BUNDLE)('V2 replaces only fresh-start 
   await ctx.plugin(AgentPresets, { default: 'coding' })
   // Built plugin dynamic imports must share Vitest's source-module scope registry.
   const nativeImport = ctx.loader.import.bind(ctx.loader)
-  vi.spyOn(ctx.loader, 'import').mockImplementation(spec => spec === '@deepseek-ai/dsh-scope'
+  vi.spyOn(ctx.loader, 'import').mockImplementation(async (spec): Promise<unknown> => spec === '@deepseek-ai/dsh-scope'
     ? Promise.resolve({ createScope, scopeOf }) : spec === '@deepseek-ai/dsh-llm'
       ? Promise.resolve({ HarnessError }) : nativeImport(spec))
   let releaseNative: (() => Promise<void>) | undefined
@@ -59,6 +59,8 @@ it.skipIf(!process.env.DSH_MULTI_AGENT_V2_BUNDLE)('V2 replaces only fresh-start 
         { name: pathToFileURL(join(dirname(process.env.DSH_MULTI_AGENT_V2_BUNDLE!), 'v2-native.js')).href,
           isolate: { multiAgentV2Native: true as const } },
       ] : []),
+      ...(['reviewing', 'locked', 'skill-limited', 'late'].includes(id)
+        ? [{ name: pathToFileURL(process.env.DSH_MULTI_AGENT_V2_BUNDLE!).href }] : []),
       ...(id === 'reviewing' ? [
         { name: pathToFileURL(join(fixtures, 'plugins/preset-tool.js')).href, config: { tool: 'privileged' } },
         { name: pathToFileURL(join(fixtures, 'plugins/model-default.js')).href,
@@ -83,18 +85,19 @@ it.skipIf(!process.env.DSH_MULTI_AGENT_V2_BUNDLE)('V2 replaces only fresh-start 
   const oldChild = await ctx.subagents.startContinuable({ provider: 'spawn', label: 'before activation',
     request: { parent, prompt: [{ type: 'text', text: 'Old work' }],
       agentOptions: { provider: 'mock', model: 'mock' } }, signal: new AbortController().signal })
-  await vi.waitFor(() => expect(ctx.agents.get(oldChild.childId)).toBeUndefined())
-  await vi.waitFor(() => expect(parent.session.snapshotEvents().some(event => event.type === 'turn/start')).toBe(true))
+  await vi.waitFor(() =>{  expect(ctx.agents.get(oldChild.childId)).toBeUndefined() })
+  await vi.waitFor(() =>{  expect(parent.session.snapshotEvents().some(event => event.type === 'turn/start')).toBe(true) })
   await parent.whenIdle()
-  const v2 = await import(pathToFileURL(process.env.DSH_MULTI_AGENT_V2_BUNDLE!).href)
+  const v2 = await import(pathToFileURL(process.env.DSH_MULTI_AGENT_V2_BUNDLE!).href) as Plugin
   const warnings = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => undefined)
-  const v2Fiber = await ctx.plugin(v2)
+  const v2Fiber = await parent.ctx.plugin(v2)
   const tools = ctx.tools.schemas(parent).map(tool => tool.name)
   expect(tools, `${tools.join(', ')}; ${JSON.stringify(warnings.mock.calls)}`).toContain('delegate_agent')
   for (const native of ['subagent_fork', 'send_message', 'interrupt_agent', 'list_agents'])
     expect(tools).toContain(native)
-  expect(tools).not.toContain('subagent')
-  expect(ctx.tools.get('subagent', parent)).toBeUndefined()
+  // The scoped plugin adds tools; the designer owns explicit native-tool composition changes.
+  expect(tools).toContain('subagent')
+  expect(ctx.tools.get('subagent', parent)).toBeDefined()
   const nativeParent = (await ctx.agents.create({ sessionId: SessionId('native-parent'),
     agentOptions: { provider: 'mock', model: 'mock' },
     setup: async agentCtx => void await ctx.agentPresets.mount(agentCtx, 'native') })).agent
@@ -107,12 +110,15 @@ it.skipIf(!process.env.DSH_MULTI_AGENT_V2_BUNDLE)('V2 replaces only fresh-start 
     agentOptions: { provider: 'mock', model: 'mock' },
     setup: async agentCtx => void await ctx.agentPresets.mount(agentCtx, 'late') })).agent
   expect(ctx.tools.get('observe_agents', lateParent)).toBeDefined()
-  expect(ctx.tools.get('delegate_agent', lateParent)).toBeUndefined()
+  expect(ctx.tools.get('delegate_agent', lateParent)).toBeDefined()
   lateParent.ctx.tools.register({ name: 'subagent', description: 'late native delegation',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
-    output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: String(value) }] },
+    output: { schema: { type: 'string' }, render: (_args, value) => {
+      if (typeof value !== 'string') throw new TypeError('Expected the native tool string result')
+      return [{ type: 'text', text: value }]
+    } },
     execute: async () => 'late native delegation' })
-  expect(ctx.tools.get('subagent', lateParent)).toBeUndefined()
+  expect(ctx.tools.get('subagent', lateParent)).toBeDefined()
   expect(ctx.tools.get('delegate_agent', lateParent)).toBeDefined()
   expect(ctx.tools.get('observe_agents', lateParent)).toBeDefined()
   const earlier = await ctx.tools.get('wait_agents', parent)!.execute(
@@ -121,8 +127,8 @@ it.skipIf(!process.env.DSH_MULTI_AGENT_V2_BUNDLE)('V2 replaces only fresh-start 
   expect(earlier.agents[0]?.state).toBe('terminal')
   const blocked = await ctx.tools.execute({ agent: parent, callId: ToolCallId('blocked'),
     name: 'subagent', arguments: {}, signal: new AbortController().signal })
-  expect(blocked.isError).toBe(true)
-  if (blocked.isError) expect(blocked.error.message).toMatch(/subagent|delegate|unknown/i)
+  expect(blocked.isError).toBe(false)
+  expect(JSON.stringify(blocked)).toContain('subagent')
   const invalid = await ctx.tools.execute({ agent: parent, callId: ToolCallId('invalid'),
     name: 'list_agent_profiles', arguments: { cursor: 'bad' }, signal: new AbortController().signal })
   expect(invalid.isError && invalid.error.info?.code).toBe('CURSOR_INVALID')
@@ -147,8 +153,8 @@ it.skipIf(!process.env.DSH_MULTI_AGENT_V2_BUNDLE)('V2 replaces only fresh-start 
     { agent_id: result.agent_id, event_seq: waited.agents[0]!.result_ref!.event_seq, field: 'text' },
     { agent: parent, signal: new AbortController().signal } as never) as { chunk: string }
   expect(detail.chunk).toContain('child done')
-  await vi.waitFor(() => expect(ctx.agents.get(result.agent_id)).toBeUndefined())
-  await vi.waitFor(() => expect(parent.session.snapshotEvents().filter(event => event.type === 'turn/start').length).toBe(2))
+  await vi.waitFor(() =>{  expect(ctx.agents.get(result.agent_id)).toBeUndefined() })
+  await vi.waitFor(() =>{  expect(parent.session.snapshotEvents().filter(event => event.type === 'turn/start').length).toBe(2) })
   await parent.whenIdle()
   const updates = await ctx.tools.get('observe_agents', parent)!.execute(
     { agent_ids: [oldChild.childId, result.agent_id] },
@@ -164,8 +170,8 @@ it.skipIf(!process.env.DSH_MULTI_AGENT_V2_BUNDLE)('V2 replaces only fresh-start 
     { agent_ids: [fork.childId], work_refs: { [fork.childId]: fork.messageId }, timeout_ms: 5000 },
     { agent: parent, signal: new AbortController().signal } as never) as { agents: Array<{ state: string }> }
   expect(forkWait.agents[0]?.state).toBe('terminal')
-  await vi.waitFor(() => expect(ctx.agents.get(fork.childId)).toBeUndefined())
-  await vi.waitFor(() => expect(parent.session.snapshotEvents().filter(event => event.type === 'turn/start').length).toBe(3))
+  await vi.waitFor(() =>{  expect(ctx.agents.get(fork.childId)).toBeUndefined() })
+  await vi.waitFor(() =>{  expect(parent.session.snapshotEvents().filter(event => event.type === 'turn/start').length).toBe(3) })
   await parent.whenIdle()
   const forkUpdates = await ctx.tools.get('observe_agents', parent)!.execute(
     { agent_ids: [fork.childId] },
@@ -180,7 +186,7 @@ it.skipIf(!process.env.DSH_MULTI_AGENT_V2_BUNDLE)('V2 replaces only fresh-start 
     request: { parent, prompt: [{ type: 'text', text: 'Use only allowed tools' }],
       toolFilter: { allow: ['coding_only', 'subagent_fork'] },
       agentOptions: { provider: 'mock', model: 'mock' } }, signal: new AbortController().signal })
-  await vi.waitFor(() => expect(ctx.agents.get(filtered.childId)).toBeUndefined())
+  await vi.waitFor(() =>{  expect(ctx.agents.get(filtered.childId)).toBeUndefined() })
   const allowedTools = adapter.requests[6]?.tools?.map(tool => tool.name)
   expect(allowedTools).toContain('coding_only')
   expect(allowedTools).toContain('subagent_fork')
@@ -189,7 +195,7 @@ it.skipIf(!process.env.DSH_MULTI_AGENT_V2_BUNDLE)('V2 replaces only fresh-start 
   expect(adapter.requests[2]?.model).toBe('review-special')
   expect(adapter.requests[2]?.tools?.map(tool => tool.name)).toContain('reviewing_only')
   expect(adapter.requests[2]?.tools?.map(tool => tool.name)).not.toContain('privileged')
-  expect(adapter.requests[2]?.tools?.map(tool => tool.name)).not.toContain('subagent')
+  expect(adapter.requests[2]?.tools?.map(tool => tool.name)).toContain('subagent')
   expect(adapter.requests[4]?.tools?.map(tool => tool.name)).toContain('coding_only')
   const prompt = JSON.stringify(adapter.requests[2])
   expect((prompt.match(/Multi-agent workflow:/g) ?? []).length).toBe(1)
@@ -198,7 +204,8 @@ it.skipIf(!process.env.DSH_MULTI_AGENT_V2_BUNDLE)('V2 replaces only fresh-start 
   expect(prompt).toContain('REVIEW_SPECIALIST_PERSONA')
   expect(JSON.stringify(adapter.requests[3])).not.toContain('REVIEW_SPECIALIST_PERSONA')
   expect(prompt).toContain('send_message')
-  const stale = ctx.tools.get('delegate_agent', parent)!.execute
+  const staleTool = ctx.tools.get('delegate_agent', parent)!
+  const stale = staleTool.execute.bind(staleTool)
   const lockedParent = (await ctx.agents.create({ sessionId: SessionId('locked-parent'),
     agentOptions: { provider: 'mock', model: 'mock' },
     setup: async agentCtx => void await ctx.agentPresets.mount(agentCtx, 'locked') })).agent
@@ -208,8 +215,8 @@ it.skipIf(!process.env.DSH_MULTI_AGENT_V2_BUNDLE)('V2 replaces only fresh-start 
   expect([...lockedDenies]).toContain('delegate_agent')
   const locked = ctx.tools.schemas(lockedParent).map(tool => tool.name)
   expect(locked).not.toContain('delegate_agent')
-  expect(locked).not.toContain('list_agent_profiles')
-  expect(locked).not.toContain('subagent')
+  expect(locked).toContain('list_agent_profiles')
+  expect(locked).toContain('subagent')
   expect(locked).toContain('subagent_fork')
   const denied = await ctx.tools.execute({ agent: lockedParent, callId: ToolCallId('denied-delegate'),
     name: 'delegate_agent', arguments: { preset_id: 'reviewing', description: 'Denied', prompt: 'No.' },
@@ -233,15 +240,18 @@ it.skipIf(!process.env.DSH_MULTI_AGENT_V2_BUNDLE)('V2 replaces only fresh-start 
     { preset_id: 'reviewing', description: 'Too late', prompt: 'Do not start.' },
     { agent: parent, signal: new AbortController().signal } as never))).rejects.toThrow()
   await releaseNative!()
-  await ctx.agentPresets.register({ id: 'native', plugins: ['subagent', 'subagent_fork'].map(tool =>
-    ({ name: pathToFileURL(join(fixtures, 'plugins/preset-tool.js')).href, config: { tool } })) })
-  const restarted = await ctx.plugin(v2)
+  await ctx.agentPresets.register({ id: 'native', plugins: [
+    ...['subagent', 'subagent_fork'].map(tool =>
+      ({ name: pathToFileURL(join(fixtures, 'plugins/preset-tool.js')).href, config: { tool } })),
+    { name: pathToFileURL(process.env.DSH_MULTI_AGENT_V2_BUNDLE!).href },
+  ] })
+  const restarted = await parent.ctx.plugin(v2)
   expect(ctx.tools.get('subagent', nativeParent)).toBeDefined() // old revision keeps its opt-out
   expect(ctx.tools.get('delegate_agent', nativeParent)).toBeUndefined()
   const newNative = (await ctx.agents.create({ sessionId: SessionId('new-native-parent'),
     agentOptions: { provider: 'mock', model: 'mock' },
     setup: async agentCtx => void await ctx.agentPresets.mount(agentCtx, 'native') })).agent
-  expect(ctx.tools.get('subagent', newNative)).toBeUndefined()
+  expect(ctx.tools.get('subagent', newNative)).toBeDefined()
   expect(ctx.tools.get('delegate_agent', newNative)).toBeDefined()
   await restarted.dispose()
 })

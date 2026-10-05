@@ -400,7 +400,7 @@ async function main(): Promise<void> {
   let hostUrl: string | undefined
   let hostCookie: string | undefined
   let announceGuestReady: (sessionId: string) => void = () => {}
-  const browserGuests = new DesktopBrowserGuests(() => hostUrl, sessionId => { announceGuestReady(sessionId) })
+  const browserGuests = new DesktopBrowserGuests(() => hostUrl, (sessionId) => { announceGuestReady(sessionId) })
   let injections: readonly unknown[] = []
   let welcomeBackend: DesktopWelcomeBackend | undefined
   let reportedLaunch = false
@@ -446,11 +446,12 @@ async function main(): Promise<void> {
       hostInspectPort, { ...hostEnvironment, DSH_CLIENT_VERSION: desktopClientVersion() }, onFailure,
       primaryRuntime,
       resources, (next) => { platformView.setSession(next) }, async (request) => {
-         if (request.action === 'open') return browserGuests.openSessionCdp(request.sessionId)
-         await browserGuests.closeSessionCdp(request.sessionId, request.lease!)
-         return {}
-       }, () => browserGuests.closeAllCdp())
-    announceGuestReady = sessionId => { host.notifyBrowserGuestReady(sessionId) }
+        if (request.action === 'open') return browserGuests.openSessionCdp(request.sessionId)
+        if (request.lease === undefined) throw new Error('desktop browser: close requires a Guest lease')
+        await browserGuests.closeSessionCdp(request.sessionId, request.lease)
+        return {}
+      }, () => browserGuests.closeAllCdp())
+    announceGuestReady = (sessionId) => { host.notifyBrowserGuestReady(sessionId) }
     return {
       start: async () => {
         const ready = await host.start()

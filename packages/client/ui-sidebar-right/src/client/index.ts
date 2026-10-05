@@ -192,7 +192,6 @@ export function apply(ctx: ClientContext): void {
       },
     }
     const injected: Omit<SidebarRightInjected, 'keyedHooks' | 'occurrence' | 'closeTab' | 'measureRoom'> = {
-      popouts: controller.popouts,
       popout: (tabId, rect) => controller.popout(tabId, rect),
       syncPresentation({ shown, track, fullscreen }) {
         if (shown) layout.openRightbar(track, fullscreen)
@@ -203,6 +202,7 @@ export function apply(ctx: ClientContext): void {
       toggleFullscreen: () => { const target = controller.commandTarget(); if (target !== undefined) controller.toggleFullscreen(target) },
       openTab: (kind, options) => { controller.openTab(kind, options) },
       hooks: {
+        popouts: controller.popouts,
         shortcuts: ctx.shortcuts.catalog,
         tabTypes: { subscribe: listener => tabs.subscribe(listener), getSnapshot: () => tabs.entries() },
       },

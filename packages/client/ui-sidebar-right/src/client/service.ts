@@ -813,7 +813,6 @@ export class SidebarRightController implements ISidebarRight {
     let target: HTMLElement
     try { target = popup.document.body }
     catch { popup.close(); return false }
-    if (target === null) { popup.close(); return false }
     const opened: Satellite = { window: popup, target, sessionId, tabId, paneId, stop: () => {} }
     const onClose = (): void => { this.closedWindow(opened) }
     popup.addEventListener('pagehide', onClose)

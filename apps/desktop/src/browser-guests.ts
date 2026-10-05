@@ -58,8 +58,9 @@ export class DesktopBrowserGuests {
   resetTarget(owner: WebContents, sessionId: unknown, tabId: unknown): { lease: DesktopBrowserLeaseId; workspace: string } {
     const matches = [...this.leases].filter(([, value]) => value.owner === owner
       && value.sessionId === sessionId && value.tabId === tabId)
-    if (matches.length !== 1) throw new Error('desktop browser: expected exactly one owned tab')
-    const [lease, value] = matches[0]!
+    const [match] = matches
+    if (matches.length !== 1 || match === undefined) throw new Error('desktop browser: expected exactly one owned tab')
+    const [lease, value] = match
     return { lease, workspace: value.workspace }
   }
 
@@ -85,10 +86,12 @@ export class DesktopBrowserGuests {
     const matches = [...this.leases].filter(([, lease]) => lease.sessionId === sessionId && lease.guest
       && !lease.guest.isDestroyed() && !lease.owner.isDestroyed())
     // ponytail: ambiguous multi-tab Sessions fail closed; add an explicit tab picker if parallel tabs need Agents.
-    if (matches.length !== 1) throw new Error('desktop browser: expected exactly one live Session guest')
-    const [id, lease] = matches[0]!
+    const [match] = matches
+    if (matches.length !== 1 || match === undefined) throw new Error('desktop browser: expected exactly one live Session guest')
+    const [id, lease] = match
     if (lease.cdp !== undefined) throw new Error('desktop browser: Guest already attached to an Agent')
-    const guest = lease.guest!
+    const guest = lease.guest
+    if (guest === undefined) throw new Error('desktop browser: Guest lease expired')
     const generation = this.cdpGeneration
     const cdp = await openBrowserCdp(guest)
     if (generation !== this.cdpGeneration || this.leases.get(id) !== lease || guest.isDestroyed() || lease.owner.isDestroyed()) {

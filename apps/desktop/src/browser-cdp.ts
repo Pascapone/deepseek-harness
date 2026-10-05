@@ -28,7 +28,12 @@ type Guest = Pick<WebContents, 'debugger' | 'isDestroyed' | 'id'> & {
   on(event: 'destroyed', listener: () => void): void
   off(event: 'destroyed', listener: () => void): void
 }
-type Command = { readonly id: number; readonly method: string; readonly params?: Record<string, unknown>; readonly sessionId?: string }
+type Command = {
+  readonly id: number
+  readonly method: string
+  readonly params?: Record<string, unknown> | null
+  readonly sessionId?: string
+}
 type TargetInfo = {
   readonly targetId: string
   readonly type: 'page'
@@ -44,18 +49,25 @@ export async function openBrowserCdp(
 ): Promise<{ readonly endpoint: string; close(): Promise<void>; readonly closed: Promise<void> }> {
   if (guest.isDestroyed() || guest.debugger.isAttached()) throw new Error('desktop browser CDP: guest unavailable')
   guest.debugger.attach('1.3')
-  let info: { url?: string; title?: string; browserContextId?: string }
+  let info: { url: string | undefined; title: string | undefined; browserContextId: string | undefined }
   let targetId: string
   try {
     const reply: unknown = await guest.debugger.sendCommand('Target.getTargetInfo')
     if (typeof reply !== 'object' || reply === null || !('targetInfo' in reply)) throw new Error('missing guest target')
-    info = reply.targetInfo as typeof info
-    if (typeof info?.browserContextId !== 'string' || !info.browserContextId) throw new Error('missing guest context')
+    const targetInfo = reply.targetInfo
+    if (typeof targetInfo !== 'object' || targetInfo === null) throw new Error('missing guest target')
+    info = {
+      url: 'url' in targetInfo && typeof targetInfo.url === 'string' ? targetInfo.url : undefined,
+      title: 'title' in targetInfo && typeof targetInfo.title === 'string' ? targetInfo.title : undefined,
+      browserContextId: 'browserContextId' in targetInfo && typeof targetInfo.browserContextId === 'string'
+        ? targetInfo.browserContextId : undefined,
+    }
+    if (typeof info.browserContextId !== 'string' || !info.browserContextId) throw new Error('missing guest context')
     if (guest.isDestroyed() || (typeof info.url === 'string' && info.url.startsWith('dsh-app:'))) {
       throw new Error('guest unavailable or application target')
     }
     const frame: unknown = await guest.debugger.sendCommand('Page.getFrameTree')
-    const id = (frame as { frameTree?: { frame?: { id?: unknown } } })?.frameTree?.frame?.id
+    const id = (frame as { frameTree?: { frame?: { id?: unknown } } } | null | undefined)?.frameTree?.frame?.id
     if (typeof id !== 'string' || !id || id.length > 128) throw new Error('missing guest main frame')
     // Playwright keys its main-frame session by TargetId; the ID must match this guest's real frame.
     targetId = id
@@ -72,6 +84,7 @@ export async function openBrowserCdp(
   let used = false
   let idleTimer: NodeJS.Timeout | undefined
   let closing: Promise<void> | undefined
+  const isClosing = (): boolean => closing !== undefined
   let resolveClosed!: () => void
   const closed = new Promise<void>((resolve) => { resolveClosed = resolve })
   const path = `/cdp/${randomBytes(32).toString('hex')}`
@@ -130,12 +143,12 @@ export async function openBrowserCdp(
       return
     }
     if (method === 'Browser.getVersion' && incoming === undefined) {
-      const chrome = process.versions.chrome ?? '0.0.0.0'
+      const chrome = process.versions.chrome
       const platform = process.platform === 'win32' ? 'Windows NT 10.0; Win64; x64'
         : process.platform === 'darwin' ? 'Macintosh; Intel Mac OS X 10_15_7' : 'X11; Linux x86_64'
       result = { protocolVersion: '1.3', product: `Chrome/${chrome}`, revision: '@guest',
         userAgent: `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chrome} Safari/537.36`,
-        jsVersion: process.versions.v8 ?? '' }
+        jsVersion: process.versions.v8 }
     } else if (method === 'Target.getBrowserContexts' && incoming === undefined) {
       result = { browserContextIds: [contextId] }
     } else if (method === 'Target.getTargets' && incoming === undefined) {
@@ -211,7 +224,8 @@ export async function openBrowserCdp(
       connection.on('message', (data, binary) => {
         if (binary) { connection.close(1003); return }
         let input: unknown
-        try { input = JSON.parse(data.toString()) } catch { connection.close(1007); return }
+        const bytes = Buffer.isBuffer(data) ? data : Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data)
+        try { input = JSON.parse(bytes.toString('utf8')) } catch { connection.close(1007); return }
         if (typeof input !== 'object' || input === null || !('id' in input)) { connection.close(1007); return }
         void command(input as Command)
       })
@@ -225,8 +239,8 @@ export async function openBrowserCdp(
       server.once('error', reject)
       server.listen(0, '127.0.0.1', () => { server.off('error', reject); resolve() })
     })
-    if (guest.isDestroyed() || closing !== undefined) {
-      if (server.listening) await new Promise<void>((resolve) => { server.close(() => resolve()) })
+    if (guest.isDestroyed() || isClosing()) {
+      if (server.listening) await new Promise<void>((resolve) => { server.close(() => { resolve() }) })
       throw new Error('guest destroyed before CDP listener started')
     }
     server.on('error', onGone)

@@ -1,10 +1,27 @@
 /** Recorded npm evidence stays intact while authored files and exact edits remain checked. */
 
 import { describe, expect, it } from 'vitest'
-import { exactEditState, isRescopeExcluded } from './rescope-vendor.ts'
+import { exactEditState, isRescopeExcluded, rewriteRescopeSource } from './rescope-vendor.ts'
 
 const ANCHOR = '\n## Sync procedure'
 const INSERTED = `\n15. **rescope**: one log entry.\n${ANCHOR}`
+
+describe('runtime identifiers beside package references', () => {
+  const upstreamName = 'cor' + 'dis'
+  it('preserves the preset id and rewrites module references in the same file', () => {
+    const file = 'packages/client/ui-agent-preset/src/client/CreatePluginMenuItem.tsx'
+    expect(rewriteRescopeSource(`const preset = '${upstreamName}'\nimport Cordis from '${upstreamName}'\nconst module = import('${upstreamName}')\n`, file))
+      .toBe(`const preset = '${upstreamName}'\nimport Cordis from '@deepseek-ai/${upstreamName}'\nconst module = import('@deepseek-ai/${upstreamName}')\n`)
+  })
+
+  it('preserves declared event ids and checks other package subpaths', () => {
+    const file = 'packages/extensions/cordis-host-runner/tests/inspect-registry.spec.ts'
+    expect(rewriteRescopeSource(`ctx.on('${upstreamName}/inspect-query', callback)\nimport value from '${upstreamName}/other'\n`, file))
+      .toBe(`ctx.on('${upstreamName}/inspect-query', callback)\nimport value from '@deepseek-ai/${upstreamName}/other'\n`)
+    expect(rewriteRescopeSource(`const value = '${upstreamName}'\n`, 'packages/example/src/index.ts'))
+      .toBe(`const value = '@deepseek-ai/${upstreamName}'\n`)
+  })
+})
 
 describe('rescope file selection', () => {
   it('preserves the recorded npm resolution', () => {

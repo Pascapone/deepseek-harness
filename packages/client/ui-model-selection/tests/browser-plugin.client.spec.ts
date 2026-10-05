@@ -226,7 +226,7 @@ describe('ui-model-selection dual entry', () => {
     await directory.load()
     const scoped = { provider: 'deepseek-official', model: 'deepseek-v4-pro', reasoningEffort: 'max' }
     b.setPresetDefault(id, 'specialist', scoped)
-    await vi.waitFor(() => expect(directory.store.getSnapshot().current).toEqual(scoped))
+    await vi.waitFor(() =>{  expect(directory.store.getSnapshot().current).toEqual(scoped) })
     const explicit = { provider: 'deepseek-official', model: 'deepseek-v4-flash' }
     b.setProjected(id, { lastUsed: null, next: explicit })
     b.setPresetDefault(id, 'another', scoped)
@@ -246,16 +246,16 @@ describe('ui-model-selection dual entry', () => {
     const older = { provider: 'deepseek-official', model: 'old' }
     const newer = { provider: 'deepseek-official', model: 'new' }
     b.setPresetDefault(id, 'older', older)
-    await vi.waitFor(() => expect(pending).toHaveLength(1))
+    await vi.waitFor(() =>{  expect(pending).toHaveLength(1) })
     b.setPresetDefault(id, 'newer', newer)
-    await vi.waitFor(() => expect(pending).toHaveLength(2))
+    await vi.waitFor(() =>{  expect(pending).toHaveLength(2) })
     pending[1]!({ ok: true, value: newer })
-    await vi.waitFor(() => expect(directory.store.getSnapshot().current).toEqual(newer))
+    await vi.waitFor(() =>{  expect(directory.store.getSnapshot().current).toEqual(newer) })
     pending[0]!({ ok: true, value: older })
     await Promise.resolve()
     expect(directory.store.getSnapshot().current).toEqual(newer)
     b.setPresetDefault(id, 'disposed', older)
-    await vi.waitFor(() => expect(pending).toHaveLength(3))
+    await vi.waitFor(() =>{  expect(pending).toHaveLength(3) })
     await scope.fiber.dispose()
     const snapshot = directory.store.getSnapshot()
     pending[2]!({ ok: true, value: older })
@@ -447,7 +447,7 @@ describe('ui-model-selection dual entry', () => {
     b.mint('s1')
     const face = b.seat().inject!(sid('s1'))
     face.load()
-    await vi.waitFor(() => expect(face.directory.getSnapshot().current?.model).toBe('deepseek-v4-flash'))
+    await vi.waitFor(() =>{  expect(face.directory.getSnapshot().current?.model).toBe('deepseek-v4-flash') })
 
     b.remote.emit('settings/document-updated', ['llm-deepseek', 1])
     b.setProjected(sid('s1'), {

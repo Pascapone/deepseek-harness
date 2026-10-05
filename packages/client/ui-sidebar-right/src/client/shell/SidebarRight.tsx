@@ -27,7 +27,7 @@
  * signal, actions — is read through the slot-owned useTabInfo hook. The Tab
  * domain follows each session's store commits, including sessions off screen.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import type { CSSProperties, ReactNode, RefObject } from 'react'
 import type { ShortcutCatalogEntry } from '@deepseek-ai/dsh-client-shortcuts/client'
 import { IconPanelLeftOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -106,13 +106,13 @@ export interface SidebarRightInjected {
   readonly hooks: {
     readonly shortcuts: HostObservable<readonly ShortcutCatalogEntry[]>
     readonly tabTypes: HostObservable<readonly SidebarRightTabDefinition[]>
+    readonly popouts: HostObservable<ReadonlyMap<string, HTMLElement | undefined>>
   }
   readonly keyedHooks: {
     readonly tabNavigation: (key: string) => HostObservable<SidebarRightTabNavigation>
   }
   /** Read a committed record's lifetime; never creates an occurrence. */
   readonly occurrence: (tab: Pick<TabRecord, 'id'>) => TabOccurrence
-  readonly popouts: { subscribe: (listener: () => void) => () => void; getSnapshot: () => ReadonlyMap<string, HTMLElement | undefined> }
   readonly popout: (tabId: TabId, rect?: FloatRect) => boolean
 }
 
@@ -368,9 +368,9 @@ function SidebarPanel(panel: PanelProps & { width: number; panelRef: RefObject<H
 export function RightbarSeat({
   sessionId, width, viewportWidth, canShow, useStore, actions, t, renderSlot, syncPresentation, measureRoom, reportAutoFullscreen,
   openTab, closeTab, useTabTypes, useTabNavigation, occurrence, retainTab, active, useShortcuts,
-  splitPane, toggleFullscreen, popouts, popout,
+  splitPane, toggleFullscreen, usePopouts, popout,
 }: RightbarSeatProps): ReactNode {
-  const windows = useSyncExternalStore(popouts.subscribe, popouts.getSnapshot)
+  const windows = usePopouts(value => value)
   // One store instance per session, so this map holds this session's surface.
   const shortcuts = useShortcuts(entries => entries)
   const surface = useStore(state => state.bySession[sessionId])

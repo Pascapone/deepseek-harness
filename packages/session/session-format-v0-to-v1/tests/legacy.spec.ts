@@ -14,6 +14,33 @@ const header = {
 } as const
 const legacyAssistantSourceKey = ['pro', 'venance'].join('')
 
+describe('released v0 descriptor v2 normalization', () => {
+  it.each([
+    { mode: 'one-shot', version: 2, provider: 'spawn' },
+    { mode: 'one-shot', version: 2, provider: 'spawn', label: 'Task' },
+    { mode: 'continuable', version: 2, provider: 'spawn', label: 'Task',
+      agentProvider: 'mock', agentModel: 'mock', persona: 'Reviewer', toolFilter: { deny: ['write'] } },
+  ])('preserves the declared composition without inventing reasoning effort: %j', (data) => {
+    const event = { type: 'subagent/descriptor', seq: 0, time: 1, data }
+    const before = structuredClone(event)
+    const restored = restoreV0ToV1(header, [event])
+    expect(restored.events).toEqual([{ ...event, data: { ...data, version: 3 } }])
+    expect(restored.events[0]?.data).not.toHaveProperty('agentReasoningEffort')
+    expect(event).toEqual(before)
+  })
+
+  it.each([
+    { mode: 'unknown', version: 2, provider: 'spawn' },
+    { mode: 'one-shot', version: 2, provider: 'spawn', persona: 'unexpected' },
+    { mode: 'continuable', version: 2, provider: 'spawn', label: 'Task', agentProvider: 'mock' },
+    { mode: 'continuable', version: 2, provider: 'spawn', label: 'Task', agentReasoningEffort: 'low' },
+    { mode: 'continuable', version: 2, provider: 'spawn', label: 'Task', unknown: true },
+    { mode: 'one-shot', version: 99, provider: 'spawn' },
+  ])('refuses malformed, extended, and future descriptors: %j', (data) => {
+    expect(() => restoreV0ToV1(header, [{ type: 'subagent/descriptor', seq: 0, time: 1, data }])).toThrow()
+  })
+})
+
 function migrate(rows: readonly unknown[]) {
   return restoreV0ToV1(header, rows)
 }
