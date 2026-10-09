@@ -79,6 +79,7 @@ describe('target-neutral Conversation apply wiring', () => {
     expect(b.runtime.slots.spec('conversation.header')).toEqual({ kind: 'single', scope: 'session-maybe' })
     expect(b.runtime.slots.spec('conversation.header.leading')).toEqual({ kind: 'single', scope: 'root' })
     expect(b.runtime.slots.entries('conversation.composer.bar')).toHaveLength(1)
+    expect(b.runtime.slots.spec('conversation.hero.worktree')).toEqual({ kind: 'single', scope: 'session-maybe' })
     await b.runtime.dispose()
   })
 
