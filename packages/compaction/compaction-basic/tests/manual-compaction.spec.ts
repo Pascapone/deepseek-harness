@@ -419,6 +419,23 @@ describe('compactNow transaction and failure classification', () => {
     expect(compactEvents(session)).toEqual([])
   })
 
+  it('declines a sole checkpoint without a new bracket and preserves its active lock', async () => {
+    const { compact, flushes } = detachedService()
+    const session = closedConversation()
+    const agent = fakeAgent(session, () => () => undefined)
+    expect(await compact.compactNow(agent, SIGNAL)).not.toBeNull()
+    const before = session.seq
+
+    await expect(compact.compactNow(agent, SIGNAL)).resolves.toBeNull()
+    expect(session.seq).toBe(before)
+    expect(compact.calls).toHaveLength(1)
+    expect(flushes()).toBe(1)
+
+    session.append('compaction/start', { compactionId: CompactionId('checkpoint-manual-lock'), turn: null })
+    expect((await rejection(() => compact.compactNow(agent, SIGNAL))).code).toBe('busy')
+    expect(compact.calls).toHaveLength(1)
+  })
+
   it('commits a standalone bracket without consuming a turn number and checkpoints durability', async () => {
     const { compact, flushes } = detachedService()
     const session = closedConversation(2, 7)

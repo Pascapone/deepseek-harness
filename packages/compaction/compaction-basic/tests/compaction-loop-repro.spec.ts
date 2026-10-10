@@ -16,8 +16,8 @@ import { Session, SessionId, type SessionEvent, type SurfaceEvent } from '@deeps
 /**
  * CBR-001 regression through the real loop. A replacement checkpoint has a high
  * log seq at the surface head and carries no tool pair, so both adjacent cuts
- * must be safe and re-compacting that checkpoint alone must succeed. This pins
- * surface-position semantics rather than raw-log scanning.
+ * must remain tool-balanced even when checkpoint-only selection is declined.
+ * This pins surface-position semantics rather than raw-log scanning.
  */
 
 class ReproCompactionEngine extends BasicCompactionEngine {

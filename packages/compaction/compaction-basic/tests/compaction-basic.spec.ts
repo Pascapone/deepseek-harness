@@ -788,6 +788,7 @@ describe('pressure measurement and retention', () => {
     const [, user, assistant] = priced.nodes
     expect(priced.nodes).toHaveLength(3)
     expect(selectCompactableRange(session, priced, user!.tokens + assistant!.tokens)).toBeNull()
+    expect(selectCompactableRange(session, priced, assistant!.tokens)).toEqual({ start: user!.seq, end: user!.seq })
   })
 
   it('counts the durable routed request envelope without putting it on the surface', async () => {
@@ -858,6 +859,56 @@ describe('pressure measurement and retention', () => {
 
     await expect(compactIfNeeded(compact, conversation(4))).rejects.toBe(stop)
     expect(measure).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([undefined, 'SYSTEM HEAD'])('declines a sole checkpoint with system=%s but permits cumulative history', async (system) => {
+    const ctx = createContext()
+    const compact = service({ auto: false, thresholdRatio: 0.05, retainTokens: 20 }, ctx)
+    const session = conversation(4, undefined, system)
+    const nodes = session.surface.nodes
+    const checkpoint = await compact.compactRegion(nodes[system === undefined ? 0 : 1]!, nodes.at(-2)!, agent(session), SIGNAL)
+    const before = session.seq
+
+    for (const trigger of ['pressure', 'context-overflow'] as const) {
+      await expect(compactIfNeeded(compact, session, trigger)).resolves.toBeNull()
+    }
+    expect(session.seq).toBe(before)
+    expect(compact.calls).toHaveLength(1)
+
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'new history '.repeat(80) }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    const cumulative = await compactIfNeeded(compact, session, 'context-overflow')
+    expect(cumulative?.shadowedSeqs).toContain(checkpoint.summarySeq + 1)
+    expect(cumulative?.shadowedSeqs.length).toBeGreaterThan(1)
+    expect(compact.calls).toHaveLength(2)
+  })
+
+  it('returns the successful result when only its checkpoint remains selectable above threshold', async () => {
+    const ctx = createContext()
+    const compact = service({ auto: false, thresholdRatio: 0.3, retainTokens: 180 }, ctx)
+    compact.summary = Array.from({ length: 7 }, (_, index) => ({ type: 'text', text: `summary ${index}` }))
+    const session = conversation(4)
+
+    const result = await compactIfNeeded(compact, session)
+    expect(result).not.toBeNull()
+    expect(ctx.tokenMeter.measure(session).totalTokens).toBeGreaterThanOrEqual(300)
+    expect(compact.calls).toHaveLength(1)
+    await expect(compactIfNeeded(compact, session)).resolves.toBeNull()
+    expect(compact.calls).toHaveLength(1)
+  })
+
+  it.each(['pressure', 'context-overflow'] as const)('preserves the active lock for a sole checkpoint during %s', async (trigger) => {
+    const compact = service({ auto: false, thresholdRatio: 0.05, retainTokens: 20 })
+    const session = conversation(4)
+    await compact.compactRegion(session.surface.nodes[0]!, session.surface.nodes.at(-2)!, agent(session), SIGNAL)
+    session.append('compaction/start', { compactionId: CompactionId('checkpoint-lock'), turn: 5 })
+    const before = session.seq
+
+    await expect(compactIfNeeded(compact, session, trigger)).rejects.toThrow(/compaction lock is already active/)
+    expect(session.seq).toBe(before)
+    expect(compact.calls).toHaveLength(1)
   })
 
   it('bounds retries when a shrinking checkpoint remains above threshold', async () => {

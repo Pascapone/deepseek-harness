@@ -81,6 +81,8 @@ Misconfiguration fails fast: unknown settings, duplicate per-model overrides, in
 
 The oldest balanced span is replaced by one summary message and the recent tail stays verbatim; the conversation continues from the summary. The operation reports how many history items were condensed and the estimated tokens freed. If nothing can be condensed safely — for example the whole conversation is one indivisible unit — nothing changes and nothing is written to the session log. If no model is available to write the summary (no configured target and no routed request yet), condensation fails with a clear error telling you to configure the summarization provider and model or route one request.
 
+A selected span containing only an existing compaction checkpoint is skipped without a summary request or new compaction markers; a checkpoint together with additional history remains eligible. If pressure stays above the threshold after a successful condensation but no further useful span exists, the operation returns that successful result. A live compaction lock still reports `busy`. This does not reduce retained images or repair missing provider-side image pricing.
+
 ### On-demand condensation with /compact
 
 With `dsh-command-compact` mounted, type `/compact` in a chat UI to condense immediately, even below the pressure threshold. The command reports how many history items were condensed and the estimated tokens saved. While the agent is mid-turn or condensation is already running, `/compact` reports that condensation is unavailable; prompts you send while it runs are accepted and start after it finishes.

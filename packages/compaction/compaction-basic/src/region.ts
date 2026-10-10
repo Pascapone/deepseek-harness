@@ -11,6 +11,7 @@ import {
   CompactionId,
   ManualCompactionError,
   compactCheckpointSource,
+  isCompactCheckpointSource,
   toolPairingBalancedAfter,
   toolPairingBalancedBefore,
 } from '@deepseek-ai/dsh-compaction'
@@ -108,7 +109,8 @@ function systemHead(session: Session, headSeq: SessionSeq): SessionEvent<'system
  * Resolve the next range starting at the first non-system surface node while
  * retaining a priced recent tail and never splitting an assistant
  * tool-call/result pair. A `system/message` at surface node 0 is never inside
- * the range; without one the range starts at node 0.
+ * the range; without one the range starts at node 0. A sole existing compaction
+ * checkpoint is not eligible; an active compaction lock still rejects selection.
  * @param session - session supplying authoritative current surface positions.
  * @param measurement - unified pressure and surface measurement from the conversation meter.
  * @param retainTokens - minimum recent tail budget retained verbatim.
@@ -151,6 +153,13 @@ export function selectCompactableRange(
   const first = surfaceNodes[firstIdx]!
   // oxlint-disable-next-line typescript/no-non-null-assertion
   const cutoff = surfaceNodes[keepFromIdx - 1]!
+  if (first === cutoff) {
+    const message = buildSummarizationInput(session, [first]).messages.at(-1)
+    if (message?.role === 'user' && isCompactCheckpointSource(message.source)) {
+      assertNoActiveCompaction(session, 'compaction selection')
+      return null
+    }
+  }
   return { start: first, end: cutoff }
 }
 
