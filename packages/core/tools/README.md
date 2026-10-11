@@ -61,10 +61,6 @@ ctx.tools.register(defineTool({
 
 The unified schema DSL supports `string`, `number`, `integer`, `boolean`, `null`, `array`, `object`, author-only `json`, and exact-one `oneOf`; `InferValue` preserves exact types through 16 container levels before widening to `JsonValue`. A raw JSON Schema (`JsonSchemaNode`) is the wire-level counterpart shared with subagents, workflows, and MCP.
 
-### Register a proxy capability
-
-`ctx.tools.registerProxy(definition)` retains a copied definition for nested `tools.execute({ parent: exec.token, ... })` calls without publishing its schema or generated SDK entry. Direct calls are denied before policy; nested calls still validate the target arguments and run its guards and execution policies. `get(name, scope)` can retrieve it subject to scope restrictions; `names(scope)` enumerates lookup-visible names, including proxies, without cloning schemas or rebuilding the scope view for each name. Registration returns the same effect-owned disposer as `register`. This lets a discovery tool expose one small schema without bypassing the underlying capabilities' permissions.
-
 ### Configure the presentation mode
 
 The `mode` config decides what the model sees: `native` (every visible schema), `ptc` (only `run_code` plus a generated SDK), or `both`.

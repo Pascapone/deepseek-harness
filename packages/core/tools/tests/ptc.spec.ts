@@ -131,18 +131,6 @@ async function runCode(
 }
 
 describe('mode-aware wire contribution', () => {
-  it.each(['ptc', 'both'] as const)('omits proxy capabilities from wire schemas and the SDK in %s mode', async (mode) => {
-    const { ctx, systemPrompt } = await setup({ mode })
-    registerEcho(ctx)
-    ctx.tools.registerProxy(defineContentToolFixture({ name: 'private_capability', description: 'private', parameters: {}, async execute() { return [] } }))
-    try {
-      const assembly = await systemPrompt.assemble()
-      expect(assembly.tools.map(tool => tool.name)).not.toContain('private_capability')
-      expect(assembly.sections.find(section => section.name === 'tools:sdk')?.text).toContain('echo: {')
-      expect(assembly.sections.find(section => section.name === 'tools:sdk')?.text).not.toContain('private_capability')
-    } finally { await ctx.fiber.dispose() }
-  })
-
   it.each([
     { mode: 'ptc', language: 'typescript' },
     { mode: 'both', language: 'typescript' },
