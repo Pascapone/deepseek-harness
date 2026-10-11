@@ -3310,6 +3310,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the exact disposer that unregisters the tool.',
       },
       {
+        signature: 'registerProxy(definition: ToolDefinition): () => void',
+        description: 'Register a capability for a proxy without exposing its schema or SDK entry. Direct calls fail; nested calls retain argument validation, guards and policy. Lookup remains available to the proxy, subject to the same scope restrictions.',
+        parameters: [{ name: 'definition', description: 'capability definition copied for this registration.' }],
+        returns: 'the exact disposer that unregisters the capability.',
+      },
+      {
         signature: 'restrict(filter: ToolRestriction): () => void',
         description: 'Restrict inherited tools for the calling agent scope. `includeOwn` also filters registrations in that exact scope; omission preserves them. Empty filters, unknown names, and reserved transport names fail.',
         parameters: [{ name: 'filter', description: 'tool mask: `allow` (keep only) and/or `deny` (remove).' }],
@@ -3328,10 +3334,16 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the definition the scope resolves, or undefined when none is visible.',
       },
       {
+        signature: 'names(scope?: ScopeKey): string[]',
+        description: 'List lookup-visible capabilities, including proxy-only registrations. Unlike schema projection, this does not clone parameter definitions.',
+        parameters: [{ name: 'scope', description: 'viewing scope; omitted for the global view.' }],
+        returns: 'capability names admitted by the scope\'s restrictions.',
+      },
+      {
         signature: 'schemas(scope?: ScopeKey): ToolSchema[]',
-        description: 'Project visible definitions onto the allowlisted model-facing schema fields, excluding execution and presentation callbacks.',
+        description: 'Project visible definitions onto the allowlisted model-facing schema fields, excluding proxy-only capabilities, execution and presentation callbacks.',
         parameters: [{ name: 'scope', description: 'the viewing scope (the agent); omitted = the global view.' }],
-        returns: 'one deep-cloned schema per visible tool.',
+        returns: 'one deep-cloned schema per model-visible tool.',
       },
       {
         signature: 'executionMode(exec: ToolExecutionInput): ToolExecutionMode',
@@ -7894,7 +7906,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ToolRuntime',
-    declaration: 'export class ToolRuntime extends Service {\n    static inject;\n    static Config: z<Config>;\n    readonly [TOOL_RUNTIME_SCHEDULER]: ToolRuntimeScheduler;\n    constructor(ctx: Context, config: Config = {});\n    presentAs(mode: ToolPresentationMode): () => Promise<void>;\n    register(definition: ToolDefinition): () => void;\n    restrict(filter: ToolRestriction): () => void;\n    guard(guard: ToolGuard): () => void;\n    get(name: string, scope?: ScopeKey): ToolDefinition | undefined;\n    schemas(scope?: ScopeKey): ToolSchema[];\n    executionMode(exec: ToolExecutionInput): ToolExecutionMode;\n    async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>;\n}',
+    declaration: 'export class ToolRuntime extends Service {\n    static inject;\n    static Config: z<Config>;\n    readonly [TOOL_RUNTIME_SCHEDULER]: ToolRuntimeScheduler;\n    constructor(ctx: Context, config: Config = {});\n    presentAs(mode: ToolPresentationMode): () => Promise<void>;\n    register(definition: ToolDefinition): () => void;\n    registerProxy(definition: ToolDefinition): () => void;\n    restrict(filter: ToolRestriction): () => void;\n    guard(guard: ToolGuard): () => void;\n    get(name: string, scope?: ScopeKey): ToolDefinition | undefined;\n    names(scope?: ScopeKey): string[];\n    schemas(scope?: ScopeKey): ToolSchema[];\n    executionMode(exec: ToolExecutionInput): ToolExecutionMode;\n    async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>;\n}',
   },
   {
     name: 'ToolRuntimeScheduler',

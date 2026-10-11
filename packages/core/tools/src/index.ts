@@ -835,6 +835,8 @@ export class ToolRuntime extends Service {
   private contentFinalizers = new WeakMap<ToolRunContext, ToolDefinition['finalizeContent']>()
   /** Execution-prepared content installed before post-execute policy. */
   private contentProjectors = new WeakMap<ToolRunContext, ToolDefinition['projectContent']>()
+  /** Registered capabilities reachable only through a parent tool execution. */
+  private readonly proxyDefinitions = new WeakSet<ToolDefinition>()
   private readonly layers = new ScopedLayers(
     scope => new ToolLayer(scope),
     () => { this.ctx.emit('tools/change') },
@@ -1013,7 +1015,9 @@ export class ToolRuntime extends Service {
     const view = this.view(scope)
     const mode = this.modeFor(scope)
     if (mode === 'native') {
-      const schemas = [...view.visible.values()].map(definition => this.schemaOf(definition, false))
+      const schemas = [...view.visible.values()]
+        .filter(definition => !this.proxyDefinitions.has(definition))
+        .map(definition => this.schemaOf(definition, false))
       return { schemas, knownNames: [...view.knownNames] }
     }
     // Validate the runtime language BEFORE projecting schemas: schemaOf reads
@@ -1022,7 +1026,9 @@ export class ToolRuntime extends Service {
     // renderer-table rejection the canonical assembly-time error for a
     // language with no SDK renderer.
     this.requirePtcRuntime(mode)
-    const schemas = [...view.visible.values()].map(definition => this.schemaOf(definition, false))
+    const schemas = [...view.visible.values()]
+      .filter(definition => !this.proxyDefinitions.has(definition))
+      .map(definition => this.schemaOf(definition, false))
     if (mode === 'ptc') {
       return {
         schemas: schemas.filter(schema => schema.name === RUN_CODE_NAME),
@@ -1089,6 +1095,19 @@ export class ToolRuntime extends Service {
       layer => layer.tools.insert(name, definition),
       { label: 'tools.register()' },
     )
+  }
+
+  /**
+   * Register a capability for a proxy without exposing its schema or SDK entry.
+   * Direct calls fail; nested calls retain argument validation, guards and policy.
+   * Lookup remains available to the proxy, subject to the same scope restrictions.
+   * @param definition - capability definition copied for this registration.
+   * @returns the exact disposer that unregisters the capability.
+   */
+  registerProxy(definition: ToolDefinition): () => void {
+    const proxy = { ...definition }
+    this.proxyDefinitions.add(proxy)
+    return this.register(proxy)
   }
 
   /**
@@ -1248,8 +1267,8 @@ export class ToolRuntime extends Service {
    * collapse at the operation boundary that owns it. The registry view
    * (`get`) is presentation-agnostic; here a MODEL-DIRECT call under `ptc`
    * may only name the reserved `run_code` transport, while a nested
-   * sub-dispatch (a `parent` token set — the `run_code` SDK calling a tool
-   * it bound) may call any visible tool. Denial surfaces as `UNKNOWN_TOOL`
+   * sub-dispatch (a `parent` token set) may call any lookup-visible tool.
+   * Proxy-only capabilities require nesting in every mode. Denial surfaces as `UNKNOWN_TOOL`
    * through the executor, matching an absent definition.
    * @param name - the tool name as registered.
    * @param scope - the viewing scope (the agent); omitted = the global view.
@@ -1264,19 +1283,31 @@ export class ToolRuntime extends Service {
   }
 
   /**
+   * List lookup-visible capabilities, including proxy-only registrations.
+   * Unlike schema projection, this does not clone parameter definitions.
+   * @param scope - viewing scope; omitted for the global view.
+   * @returns capability names admitted by the scope's restrictions.
+   */
+  names(scope?: ScopeKey): string[] {
+    return [...this.view(scope).visible.keys()]
+  }
+
+  /**
    * Project visible definitions onto the allowlisted model-facing schema fields,
-   * excluding execution and presentation callbacks.
+   * excluding proxy-only capabilities, execution and presentation callbacks.
    * @param scope - the viewing scope (the agent); omitted = the global view.
-   * @returns one deep-cloned schema per visible tool.
+   * @returns one deep-cloned schema per model-visible tool.
    */
   schemas(scope?: ScopeKey): ToolSchema[] {
-    return [...this.view(scope).visible.values()].map(definition => this.schemaOf(definition, true))
+    return [...this.view(scope).visible.values()]
+      .filter(definition => !this.proxyDefinitions.has(definition))
+      .map(definition => this.schemaOf(definition, true))
   }
 
   /** Project visible callable tools onto the generated PTC mode SDK contract. */
   private sdkSchemas(scope?: ScopeKey): ToolSdkSchema[] {
     return [...this.view(scope).visible.values()]
-      .filter(definition => definition.name !== RUN_CODE_NAME)
+      .filter(definition => definition.name !== RUN_CODE_NAME && !this.proxyDefinitions.has(definition))
       .map((definition): ToolSdkSchema => {
         const output = snapshotJsonValue(definition.output.schema)
         /* v8 ignore next -- registration already validated and retained this schema as lossless JSON. */
@@ -1345,7 +1376,8 @@ export class ToolRuntime extends Service {
   }
 
   /**
-   * Whether the `ptc` mode collapse denies a model-direct call: only the
+   * Whether proxy-only registration or `ptc` mode denies a model-direct call.
+   * Proxy-only capabilities always require nesting; in `ptc` mode only the
    * reserved `run_code` transport may be named. Nested sub-dispatches (a
    * `parent` token set) bypass the collapse. One home for the
    * security-relevant predicate, shared by {@link resolveExecution} and
@@ -1361,7 +1393,9 @@ export class ToolRuntime extends Service {
    * @param nested - whether the call is a transport sub-dispatch, not a model-direct call.
    */
   private collapses(name: string, scope: ScopeKey | undefined, nested: boolean): boolean {
-    return !nested && this.modeFor(scope) === 'ptc' && name !== RUN_CODE_NAME
+    if (nested || name === RUN_CODE_NAME) return false
+    const definition = this.get(name, scope)
+    return this.modeFor(scope) === 'ptc' || definition !== undefined && this.proxyDefinitions.has(definition)
   }
 
   /**
@@ -1480,7 +1514,9 @@ export class ToolRuntime extends Service {
           exec: execution,
           result: toolErrorResult(new ToolNotFoundError(
             name,
-            `only \`${RUN_CODE_NAME}\` is callable directly — call \`${name}\` from inside a \`${RUN_CODE_NAME}\` program instead`,
+            this.proxyDefinitions.has(visible)
+              ? 'call this capability through its registered proxy tool'
+              : `only \`${RUN_CODE_NAME}\` is callable directly — call \`${name}\` from inside a \`${RUN_CODE_NAME}\` program instead`,
           )),
         }
       }

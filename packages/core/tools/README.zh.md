@@ -61,6 +61,10 @@ ctx.tools.register(defineTool({
 
 统一 schema DSL 支持 `string`、`number`、`integer`、`boolean`、`null`、`array`、`object`、仅供作者使用的 `json` 与恰好匹配一个分支的 `oneOf`；`InferValue` 在 16 层容器内保留精确类型，之后加宽为 `JsonValue`。原始 JSON Schema（`JsonSchemaNode`）是与 subagent、工作流和 MCP 共享的协议级对应类型。
 
+### 注册代理能力
+
+`ctx.tools.registerProxy(definition)` 保留定义的副本，供嵌套的 `tools.execute({ parent: exec.token, ... })` 调用使用，但不发布其 schema 或生成的 SDK 条目。直接调用在策略运行前被拒绝；嵌套调用仍会校验目标参数并执行其 guard 与执行策略。`get(name, scope)` 可在作用域限制内读取定义；`names(scope)` 枚举包括代理在内的查找可见名称，而不复制 schema 或为每个名称重建作用域视图。注册返回与 `register` 相同的 effect 所有的释放函数。发现工具因此可以只公开一个小 schema，而不绕过底层能力的权限。
+
 ### 配置呈现模式
 
 `mode` 配置决定模型看到什么：`native`（每个可见 schema）、`ptc`（只有 `run_code` 加一份生成 SDK）或 `both`。

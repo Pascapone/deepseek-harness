@@ -52,6 +52,44 @@ const echoTool = defineTool({
 })
 
 describe('ToolRuntime', () => {
+  it('keeps proxy capabilities out of schemas, denies direct calls, and validates and guards nested calls', async () => {
+    const ctx = await setup()
+    let invoked = 0
+    const dispose = ctx.tools.registerProxy(defineTool({
+      name: 'hidden', description: 'private capability', parameters: { text: { type: 'string', required: true } },
+      output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] }, async execute(args) { invoked++; return args.text },
+    }))
+    ctx.tools.register(defineTool({
+      name: 'proxy', description: 'proxy', parameters: { text: { type: 'string' } },
+      output: { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
+      async execute(args, exec) {
+        const result = await ctx.tools.execute({ signal: exec.signal, name: 'hidden', arguments: args, parent: exec.token, rootCallId: exec.rootCallId, callId: ToolCallId('nested-proxy') })
+        if (result.isError) throw new Error(result.error.message)
+        return result.value
+      },
+    }))
+    try {
+      expect(ctx.tools.names()).toEqual(['hidden', 'proxy'])
+      expect(ctx.tools.schemas().map(tool => tool.name)).toEqual(['proxy'])
+      expect((await ctx.systemPrompt.assemble()).tools.map(tool => tool.name)).toEqual(['proxy'])
+      expect(ctx.tools.get('hidden')).toBeDefined()
+      const invoke = (name: string, args: object) => ctx.tools.execute({ name, arguments: args, signal: testToolSignal, callId: ToolCallId('proxy-root') })
+      const direct = await invoke('hidden', { text: 'direct' })
+      expect(direct.isError).toBe(true)
+      expect(direct.error?.message).toContain('proxy tool')
+      expect((await invoke('proxy', {})).isError).toBe(true)
+      const success = await invoke('proxy', { text: 'nested' })
+      expect(success.isError).toBe(false)
+      expect(success.value).toBe('nested')
+      const stopGuard = ctx.tools.guard(exec => exec.name === 'hidden' ? 'blocked capability' : undefined)
+      expect((await invoke('proxy', { text: 'blocked' })).isError).toBe(true)
+      stopGuard()
+      expect(invoked).toBe(1)
+      dispose()
+      expect(ctx.tools.get('hidden')).toBeUndefined()
+    } finally { await ctx.fiber.dispose() }
+  })
+
   it('preserves deferred loading through registry and prompt schema projection', async () => {
     const ctx = await setup()
     try {

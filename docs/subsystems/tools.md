@@ -533,6 +533,15 @@ presentAs(mode: ToolPresentationMode): () => Promise<void>
 register(definition: ToolDefinition): () => void
 
 /**
+ * Register a capability for a proxy without exposing its schema or SDK entry.
+ * Direct calls fail; nested calls retain argument validation, guards and policy.
+ * Lookup remains available to the proxy, subject to the same scope restrictions.
+ * @param definition - capability definition copied for this registration.
+ * @returns the exact disposer that unregisters the capability.
+ */
+registerProxy(definition: ToolDefinition): () => void
+
+/**
  * Restrict inherited tools for the calling agent scope. `includeOwn` also
  * filters registrations in that exact scope; omission preserves them. Empty
  * filters, unknown names, and reserved transport names fail.
@@ -565,10 +574,18 @@ guard(guard: ToolGuard): () => void
 get(name: string, scope?: ScopeKey): ToolDefinition | undefined
 
 /**
+ * List lookup-visible capabilities, including proxy-only registrations.
+ * Unlike schema projection, this does not clone parameter definitions.
+ * @param scope - viewing scope; omitted for the global view.
+ * @returns capability names admitted by the scope's restrictions.
+ */
+names(scope?: ScopeKey): string[]
+
+/**
  * Project visible definitions onto the allowlisted model-facing schema fields,
- * excluding execution and presentation callbacks.
+ * excluding proxy-only capabilities, execution and presentation callbacks.
  * @param scope - the viewing scope (the agent); omitted = the global view.
- * @returns one deep-cloned schema per visible tool.
+ * @returns one deep-cloned schema per model-visible tool.
  */
 schemas(scope?: ScopeKey): ToolSchema[]
 
