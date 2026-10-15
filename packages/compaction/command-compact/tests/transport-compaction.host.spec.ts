@@ -54,7 +54,7 @@ class AnswerAdapter extends LlmAdapter {
 }
 
 /** Socket boundary and compact operation correlation without credentials or prompt data. */
-async function harness() {
+async function harness(port = 0) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-compact-transport-'))
   const ctx = new Context()
   const server = createServer()
@@ -138,7 +138,24 @@ async function harness() {
     })
     const shared = ctx.connection.createSharedFetchHandler('/api')
     server.on('request', (req, res) => {
+      if (req.method === 'GET' && req.url === '/') {
+        res.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' })
+        res.end(`<title>Isolated compact transport probe</title><script>globalThis.probe = ${JSON.stringify({
+          type: 'client-request', rpcId: 'real-browser', method: 'commands/execute',
+          payload: { args: { agentId: agent.id, line: '/compact', submittedAttachments: [] } },
+        })}</script>Controlled fake summary: 90 real seconds; no model or credentials.`)
+        return
+      }
+      if (req.url !== '/api/commands/execute') {
+        res.writeHead(404)
+        res.end()
+        return
+      }
       response = res
+      if (port !== 0) rpcId = 'real-browser'
+      res.once('close', () => {
+        trace.push({ hop: res.writableEnded ? 'server-response-end' : 'server-socket-close', ms: performance.now(), rpcId })
+      })
       const pending = bridge(req, res, {
         requestBodyMode: request => shared.requestBodyMode(request),
         fetch: (request) => {
@@ -152,7 +169,7 @@ async function harness() {
       bridges.add(pending)
       void pending.then(() => bridges.delete(pending), () => bridges.delete(pending))
     })
-    await new Promise<void>((resolve) => { server.listen(0, '127.0.0.1', resolve) })
+    await new Promise<void>((resolve) => { server.listen(port, '127.0.0.1', resolve) })
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`
     const rpc = createWebConnectionRpc((input, init) => {
       if (typeof init.body !== 'string') throw new Error('browser RPC body must be JSON text')
@@ -168,7 +185,8 @@ async function harness() {
       return fetch(new URL(input, origin), init)
     })
     return {
-      agent, compact, trace,
+      agent, compact, trace, origin,
+      settle: () => Promise.all(bridges),
       disposeAgent: () => agentOwner.dispose(),
       agentRegistered: () => ctx.agents.get(agent.id) !== undefined,
       call: (signal?: AbortSignal) => rpc.call('/api', 'commands/execute', {
@@ -179,7 +197,7 @@ async function harness() {
         response?.destroy()
       },
       async dispose() {
-        await vi.runAllTimersAsync()
+        if (vi.isFakeTimers()) await vi.runAllTimersAsync()
         await Promise.allSettled(bridges)
         await ctx.fiber.dispose()
         server.closeAllConnections()
@@ -204,6 +222,33 @@ async function harness() {
 const eventsOf = (agent: Agent, type: string) => agent.session.snapshotEvents().filter(event => event.type === type)
 
 describe('manual compact unary HTTP lifetime', () => {
+  it.runIf(process.env.DEV_GATEWAY_PORT !== undefined)('keeps a real browser request open for a 90s summary', async () => {
+    const test = await harness(Number(process.env.DEV_GATEWAY_PORT))
+    console.log(`REAL_BROWSER_COMPACT ${test.origin}`)
+    try {
+      await test.compact.started.promise
+      const signal = test.compact.signals[0]
+      if (signal === undefined) throw new Error('summary did not start')
+      signal.addEventListener('abort', () => {
+        test.trace.push({ hop: 'summary-abort', ms: performance.now(), reason: signal.reason })
+      }, { once: true })
+      await test.settle()
+      await test.agent.whenIdle()
+      const start = test.trace.find(item => item.hop === 'compaction/start')
+      const end = test.trace.find(item => item.hop === 'compaction/end')
+      expect((end?.ms ?? 0) - (start?.ms ?? 0)).toBeGreaterThanOrEqual(90_000)
+      expect(signal.aborted).toBe(false)
+      expect(eventsOf(test.agent, 'compaction/summary')).toHaveLength(1)
+      expect(eventsOf(test.agent, 'compaction/end')).toHaveLength(1)
+      expect(eventsOf(test.agent, 'command/done')[0]?.data).toMatchObject({ kind: 'success' })
+    } finally {
+      console.log('REAL_BROWSER_TRACE', JSON.stringify(test.trace.map(item => ({ ...item,
+        reason: item.reason instanceof Error ? { name: item.reason.name, message: item.reason.message } : item.reason,
+      }))))
+      await test.dispose()
+    }
+  }, 240_000)
+
   it.each(['complete', 'socket-close', 'caller-abort', 'user-stop', 'disposed'] as const)(
     'keeps transaction ownership through a 90s fake summary: %s', async (outcome) => {
       const test = await harness()
