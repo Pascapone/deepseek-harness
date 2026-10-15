@@ -9,11 +9,14 @@
   en: 541354f6468e117d
   zh: 2d7a665bad828a02
 /sessions/sessioneventmap-the-event-vocabulary/the-request-header-event-request-header:
-  en: 6eb931fcb2f4ab8d
-  zh: d822a83384cc1fee
+  en: 333ec5bbe546a878
+  zh: 25d46a213f2219c3
 /sessions/sessioneventmap-the-event-vocabulary/the-route-capacity-event-request-context:
-  en: 7e21ea8bcdb16b7a
-  zh: a377774d3596dbeb
+  en: f8c20f570d746123
+  zh: 26d6e0fe6555a455
+/sessions/sessioneventmap-the-event-vocabulary/actual-dispatch-cut:
+  en: d9f31c3773468c30
+  zh: 111dbddf0567e349
 /sessions/sessionevent-t-one-log-entry:
   en: 622d333d9d903795
   zh: fdc9ee663330f01e

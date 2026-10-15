@@ -311,6 +311,7 @@ describe('compact configuration and defaults', () => {
     const resolved = resolveConfig({})
 
     expect(resolved).toEqual({
+      explicitRetention: false,
       thresholdRatio: 0.8,
       headroomTokens: 65_536,
       retainRatio: 0.16,
@@ -680,7 +681,7 @@ describe('pressure measurement and retention', () => {
     await expect(compactIfNeeded(compact, session)).resolves.not.toBeNull()
   })
 
-  it('requires capacity only for proactive pressure, not provider-confirmed overflow', async () => {
+  it('requires a known budget before either proactive or overflow summarization', async () => {
     const ctx = new Context()
     void new LlmRuntime(ctx)
     new SessionProjectionRegistry(ctx)
@@ -701,7 +702,7 @@ describe('pressure measurement and retention', () => {
     await expect(compactIfNeeded(compact, session, 'pressure'))
       .rejects.toThrow(/no context capacity for unknown-context\/model/)
     await expect(compactIfNeeded(compact, session, 'context-overflow'))
-      .resolves.not.toBeNull()
+      .rejects.toThrow(/no context capacity for unknown-context\/model/)
   })
 
   it('declines forced overflow when the whole surface is one indivisible tool pair', async () => {
@@ -740,7 +741,7 @@ describe('pressure measurement and retention', () => {
     session.append('step/end', { turn: 1, step: 1 })
     const generation = session.surface.replaceGeneration
 
-    await expect(compactIfNeeded(compact, session, 'context-overflow')).resolves.toBeNull()
+    await expect(compactIfNeeded(compact, session, 'context-overflow')).rejects.toThrow(/no safe useful range/)
     expect(session.surface.replaceGeneration).toBe(generation)
     expect(session.snapshotEvents().some(event => event.type === 'compaction/start')).toBe(false)
   })
@@ -828,7 +829,8 @@ describe('pressure measurement and retention', () => {
     const result = await compactIfNeeded(compact, session, 'pressure', 'fallback')
     expect(result).not.toBeNull()
     expect(session.requestHeader()?.config.model).toBe('actual')
-    expect(measure.mock.calls[0]).toEqual([session])
+    expect(measure.mock.calls[0]?.[0]).toBe(session)
+    expect(measure.mock.calls[0]?.[1]?.config).toMatchObject({ provider: 'actual', model: 'actual' })
   })
 
   it('declines when envelope pressure is high but the surface has no compactable range', async () => {
@@ -840,14 +842,14 @@ describe('pressure measurement and retention', () => {
       header: { config: { provider: MODEL, model: MODEL }, tools: bulkTools },
       reason: 'initial',
     })
-    expect(await compactIfNeeded(compact, empty)).toBeNull()
+    await expect(compactIfNeeded(compact, empty)).rejects.toThrow(/no safe useful range/)
 
     const retained = conversation(1)
     retained.append('request/header', {
       header: { config: { provider: MODEL, model: MODEL }, tools: bulkTools },
       reason: 'resume',
     })
-    expect(await compactIfNeeded(compact, retained)).toBeNull()
+    await expect(compactIfNeeded(compact, retained)).rejects.toThrow(/no safe useful range|cannot reach input target/)
   })
 
   it('uses one unified measurement for each pressure-and-retention decision', async () => {
@@ -858,7 +860,9 @@ describe('pressure measurement and retention', () => {
     vi.spyOn(compact, 'compactRegion').mockRejectedValueOnce(stop)
 
     await expect(compactIfNeeded(compact, conversation(4))).rejects.toBe(stop)
-    expect(measure).toHaveBeenCalledTimes(1)
+    const snapshots = measure.mock.results.filter(result => result.type === 'return').map(result => result.value)
+    expect(snapshots.length).toBeGreaterThan(0)
+    expect(snapshots.every(snapshot => JSON.stringify(snapshot.nodes) === JSON.stringify(snapshots[0]?.nodes))).toBe(true)
   })
 
   it.each([undefined, 'SYSTEM HEAD'])('declines a sole checkpoint with system=%s but permits cumulative history', async (system) => {
@@ -870,32 +874,33 @@ describe('pressure measurement and retention', () => {
     const before = session.seq
 
     for (const trigger of ['pressure', 'context-overflow'] as const) {
-      await expect(compactIfNeeded(compact, session, trigger)).resolves.toBeNull()
+      await expect(compactIfNeeded(compact, session, trigger)).rejects.toThrow(/no safe useful range/)
     }
-    expect(session.seq).toBe(before)
+    expect(session.snapshotEvents().slice(before).every(event => event.type === 'request/context')).toBe(true)
     expect(compact.calls).toHaveLength(1)
 
     session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'new history '.repeat(80) }],
       source: { kind: 'user' },
     }), { surfaceOp: 'append' })
-    const cumulative = await compactIfNeeded(compact, session, 'context-overflow')
+    const cumulative = await compact.compactRegion(
+      session.surface.nodes[system === undefined ? 0 : 1]!, session.surface.nodes.at(-2)!, agent(session), SIGNAL,
+    )
     expect(cumulative?.shadowedSeqs).toContain(checkpoint.summarySeq + 1)
     expect(cumulative?.shadowedSeqs.length).toBeGreaterThan(1)
     expect(compact.calls).toHaveLength(2)
   })
 
-  it('returns the successful result when only its checkpoint remains selectable above threshold', async () => {
+  it('reports critical residual pressure after a summary and never summarizes a sole checkpoint again', async () => {
     const ctx = createContext()
     const compact = service({ auto: false, thresholdRatio: 0.3, retainTokens: 180 }, ctx)
     compact.summary = Array.from({ length: 7 }, (_, index) => ({ type: 'text', text: `summary ${index}` }))
     const session = conversation(4)
 
-    const result = await compactIfNeeded(compact, session)
-    expect(result).not.toBeNull()
+    await expect(compactIfNeeded(compact, session)).rejects.toThrow(/no safe useful range|still above target/)
     expect(ctx.tokenMeter.measure(session).totalTokens).toBeGreaterThanOrEqual(300)
     expect(compact.calls).toHaveLength(1)
-    await expect(compactIfNeeded(compact, session)).resolves.toBeNull()
+    await expect(compactIfNeeded(compact, session)).rejects.toThrow(/no safe useful range/)
     expect(compact.calls).toHaveLength(1)
   })
 
@@ -924,7 +929,7 @@ describe('pressure measurement and retention', () => {
     }))
 
     await expect(compactIfNeeded(compact, conversation(4)))
-      .rejects.toThrow(/still above threshold after 1 compaction attempts/)
+      .rejects.toThrow(/still above target after 1 compaction attempts/)
   })
 
   it('rounds a retention cut head-ward to preserve tool-call/result pairing', async () => {
@@ -1206,7 +1211,7 @@ describe('compaction region transaction', () => {
       nodes[0]!,
       nodes[1]!,
       agent(closed, MODEL),
-    )).rejects.toThrow(/no open turn/)
+    )).rejects.toThrow(/open turn/)
 
     const locked = conversation(1)
     locked.append('compaction/start', {
@@ -1234,14 +1239,14 @@ describe('compaction region transaction', () => {
       node,
       node,
       agent(session, MODEL),
-    )).rejects.toThrow(/no open turn/)
+    )).rejects.toThrow(/open turn/)
   })
 
   it('rejects a meter snapshot that changed before summarization began', async () => {
     const ctx = createContext()
     const meter = ctx.tokenMeter
     const original = meter.measure.bind(meter)
-    vi.spyOn(meter, 'measure').mockImplementationOnce((session) => {
+    vi.spyOn(meter, 'measure').mockImplementation((session) => {
       const measurement = original(session)
       return { ...measurement, nodes: measurement.nodes.slice(1) }
     })
@@ -1376,6 +1381,14 @@ describe('compaction region transaction', () => {
 class ScriptedAdapter extends LlmAdapter {
   lastOptions: GenerateOptions | undefined
   usage: TokenUsage | undefined
+
+  override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    return Promise.resolve({ provider, id: model, name: model, context: { contextWindow: 1_000_000 } })
+  }
+
+  override imageRequestPricing() {
+    return { priceImages: (images: readonly unknown[]) => images.map(() => ({ visualTokens: 85, text: '[image handle]' })) }
+  }
 
   constructor(
     private readonly blocks: readonly ContentBlock[],
@@ -1531,10 +1544,15 @@ describe('default one-shot summarizer', () => {
       source: { kind: 'test' },
     })
     const system = createSystemMessage('REPLAYED SYSTEM')
+    const session = Session.create(SessionId('durable-summary-prefix'))
+    session.append('turn/start', { turn: 1 })
+    session.append('system/message', { turn: 1, step: 1, message: system }, { surfaceOp: 'append' })
+    session.append('user/message', prefix, { surfaceOp: 'append' })
+    session.append('request/header', { header: { config: { provider: MODEL, model: MODEL }, tools }, reason: 'initial' })
     await compact.runSummarize({
       tools,
       messages: [system, prefix],
-    }, agent(conversation(1), MODEL))
+    }, agent(session, MODEL))
 
     expect(adapter.lastOptions).not.toHaveProperty('system')
     expect(adapter.lastOptions?.tools).toEqual(tools)
@@ -1604,7 +1622,7 @@ describe('default one-shot summarizer', () => {
     expect(adapter.lastOptions?.model).toBe('routed')
   })
 
-  it('records the model actually dispatched after one-shot stream routing', async () => {
+  it('rejects middleware rerouting that would invalidate the prepared summary budget', async () => {
     const { ctx, compact } = await summarizerHarness([{ type: 'text', text: 'unused' }])
     const routedAdapter = new ScriptedAdapter([{ type: 'text', text: 'routed summary' }])
     ctx.llm.registerAdapter(['routed-summary-provider'], routedAdapter)
@@ -1616,15 +1634,9 @@ describe('default one-shot summarizer', () => {
 
     const session = conversation(3, 'large history '.repeat(500))
     const nodes = session.surface.nodes
-    await compact.compactRegion(nodes[0]!, nodes[3]!, agent(session, MODEL), SIGNAL)
-    expect(session.snapshotEvents().findLast(event => event.type === 'compaction/summary')?.data).toMatchObject({
-      summary: [{ type: 'text', text: 'routed summary' }],
-      llmStreamCall: true,
-      provider: 'routed-summary-provider',
-      model: 'routed-summary-model',
-    })
-    expect(routedAdapter.lastOptions?.provider).toBe('routed-summary-provider')
-    expect(routedAdapter.lastOptions?.model).toBe('routed-summary-model')
+    await expect(compact.compactRegion(nodes[0]!, nodes[3]!, agent(session, MODEL), SIGNAL)).rejects.toMatchObject({ code: 'INVALID_PREPARED_CALL' })
+    expect(session.snapshotEvents().some(event => event.type === 'compaction/summary')).toBe(false)
+    expect(routedAdapter.lastOptions).toBeUndefined()
   })
 
   it('fails clearly when no complete summarization target can be resolved', async () => {
@@ -1928,8 +1940,8 @@ describe('automatic listener and loader composition', () => {
     const compact = new TestCompactionEngine(ctx, {
       headroomTokens: 0,
       maxTokens: 8192,
-      thresholdRatio: 1,
-      retainTokens: 900,
+      thresholdRatio: 0.1,
+      retainTokens: 90,
     })
     const session = toolConversation()
 
@@ -1951,8 +1963,8 @@ describe('automatic listener and loader composition', () => {
     const compact = new TestCompactionEngine(ctx, {
       headroomTokens: 0,
       maxTokens: 8192,
-      thresholdRatio: 1,
-      retainTokens: 900,
+      thresholdRatio: 0.05,
+      retainTokens: 90,
     })
     compact.error = new Error('summary unavailable after prune')
     const session = oversizedToolResult(3_000, true)
@@ -1976,8 +1988,8 @@ describe('automatic listener and loader composition', () => {
     const compact = new TestCompactionEngine(ctx, {
       headroomTokens: 0,
       maxTokens: 8192,
-      thresholdRatio: 1,
-      retainTokens: 900,
+      thresholdRatio: 0.05,
+      retainTokens: 90,
     })
     compact.mutateDuringSummary = () => { controller.abort('cancelled during summary') }
     compact.error = new Error('summary cancelled after prune')
@@ -1988,7 +2000,7 @@ describe('automatic listener and loader composition', () => {
   })
 
   it('preserves the newest whole tool-call/result pair during forced overflow compaction', async () => {
-    const ctx = createContext()
+    const ctx = createContext(10_000)
     void new TestCompactionEngine(ctx, {
       headroomTokens: 0,
       maxTokens: 8192,
@@ -2068,7 +2080,7 @@ describe('automatic listener and loader composition', () => {
     const ctx = createContext()
     const warnings: string[] = []
     ctx.logger.warn = ((message: string) => void warnings.push(message)) as typeof ctx.logger.warn
-    const compact = new TestCompactionEngine(ctx)
+    const compact = new TestCompactionEngine(ctx, { headroomTokens: 0, maxTokens: 8192 })
     compact.error = 'non-error recovery failure'
     const session = conversation(3)
     const generation = session.surface.replaceGeneration
@@ -2092,7 +2104,8 @@ describe('automatic listener and loader composition', () => {
 
   it('recovers an overflow for an unlisted routed model', async () => {
     const ctx = createContext()
-    void new TestCompactionEngine(ctx)
+    ctx.llm.registerAdapter(['unknown-routed-provider'], new ContextAdapter(1000))
+    void new TestCompactionEngine(ctx, { headroomTokens: 0, maxTokens: 8192 })
     const session = conversation(2)
     session.append('request/header', {
       header: { config: { provider: 'unknown-routed-provider', model: 'unknown-routed-model' } },
@@ -2115,7 +2128,7 @@ describe('automatic listener and loader composition', () => {
 
   it('honors retry caps and ignores non-context failures', async () => {
     const ctx = createContext()
-    const compact = new TestCompactionEngine(ctx, { maxOverflowRetries: 1 })
+    const compact = new TestCompactionEngine(ctx, { headroomTokens: 0, maxTokens: 8192, maxOverflowRetries: 1 })
     const compactSpy = vi.spyOn(compact, 'compactIfNeeded')
     const owner = agent(conversation(3), MODEL)
     expect(await recover(ctx, owner, Object.assign(new Error('rate limit'), { code: 'RATE_LIMIT' })))
@@ -2149,7 +2162,7 @@ describe('automatic listener and loader composition', () => {
 
   it('does not retry when cancellation lands during an awaited compaction', async () => {
     const ctx = createContext()
-    const compact = new TestCompactionEngine(ctx)
+    const compact = new TestCompactionEngine(ctx, { headroomTokens: 0, maxTokens: 8192 })
     const controller = new AbortController()
     compact.mutateDuringSummary = () => { controller.abort('cancelled during summary') }
     const session = conversation(3)
@@ -2299,8 +2312,9 @@ describe('route-priced image pressure', () => {
 
   it('selects an image-dense range only when the routed price counts visual tokens', () => {
     const session = imageConversation()
-    const routed = pricedContext().tokenMeter.measure(session)
     const neutral = createContext().tokenMeter.measure(session)
+    const routed = pricedContext().tokenMeter.refresh(session)
+    expect(createContext().tokenMeter.measure(session).surfaceTokens).toBe(routed.surfaceTokens)
 
     expect(routed.surfaceTokens).toBeGreaterThan(neutral.surfaceTokens + 4 * IMAGE_VISUAL_TOKENS - 200)
     expect(routed.nodes.map(node => node.seq)).toEqual(neutral.nodes.map(node => node.seq))
@@ -2319,7 +2333,7 @@ describe('route-priced image pressure', () => {
     // must ask whether the replacement lowers route pressure.
     const ctx = pricedContext(1_000)
     const session = imageConversation(1)
-    const before = ctx.tokenMeter.measure(session)
+    const before = ctx.tokenMeter.refresh(session)
     const imageNode = before.nodes[0]!
     const compact = new TestCompactionEngine(ctx, { auto: false })
     compact.summary = [{

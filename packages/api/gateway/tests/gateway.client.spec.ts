@@ -96,6 +96,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
       signal?: AbortSignal,
     ) => Promise<RemoteResult<{ readonly ref: string }>>
     'probe/maybe': (value: string | null | undefined) => Promise<RemoteResult<string | null | undefined>>
+    'probe/optional': (value?: string | null, signal?: AbortSignal) => Promise<RemoteResult<string | null | undefined>>
     'probe/bytes': (signal?: AbortSignal) => Promise<RemoteResult<{ readonly data: Uint8Array<ArrayBuffer>; readonly offset: number }>>
     'probe/watch': (topic: string, signal?: AbortSignal) => AsyncIterable<string>
     'probe/attach': (topic: string, signal?: AbortSignal) => RemoteStreamHandle<string, string>
@@ -1194,6 +1195,35 @@ describe('Client Typert API', () => {
         }],
       }],
     })).rejects.toThrow('scope must select its only lookup parameter')
+  })
+
+  it('allows omitted authored optional arguments without relaxing required undefined-valued arguments', async () => {
+    const call = vi.fn<ConnectionHandle['rpc']['call']>().mockResolvedValue({ ok: true, value: undefined })
+    const ctx = await bench(call)
+    const descriptor = maybeDescriptor()
+    const optional: InvocationDescriptor = {
+      ...descriptor,
+      id: '@fixture/probe#probe/optional',
+      method: 'optional',
+      parameters: [{ ...descriptor.parameters[0]!, optional: true }],
+      cancellation: { parameter: 'signal' },
+    }
+    const dispose = await ctx.remote.$mount({ package: '@fixture/probe', descriptors: [descriptor, optional] })
+    await expect(ctx.remote.probe.optional()).resolves.toEqual({ ok: true, value: undefined })
+    expect(call.mock.calls.at(-1)?.[2]).toEqual({ args: {} })
+    await ctx.remote.probe.optional('compaction-retention')
+    expect(call.mock.calls.at(-1)?.[2]).toEqual({ args: { value: 'compaction-retention' } })
+    const controller = new AbortController()
+    await ctx.remote.probe.optional(undefined, controller.signal)
+    const signal = call.mock.calls.at(-1)?.[3]
+    expect(signal?.aborted).toBe(false)
+    controller.abort()
+    expect(signal?.aborted).toBe(true)
+    // @ts-expect-error -- explicit undefined remains a required positional argument.
+    await expect(ctx.remote.probe.maybe()).rejects.toThrow('expected 1 argument(s), got 0')
+    // @ts-expect-error -- optional parameters do not permit arbitrary extra arguments.
+    await expect(ctx.remote.probe.optional('value', undefined, 'extra')).rejects.toThrow('got 3')
+    await dispose()
   })
 
   it('validates invocation arity and required adapters, and requires a live Connection', async () => {

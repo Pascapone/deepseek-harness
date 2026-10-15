@@ -5,11 +5,11 @@
 import { z } from 'zod'
 import { lastAssistantStreamChunk, type TokenUsage } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-llm-retry/types'
-import { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
-import type { ContextPressureProjection, TokenUsageProjection } from './projection.ts'
-import { foldSurfaceProjection } from './surface-projection.ts'
+import type { TokenUsageProjection } from './projection.ts'
+import { accountingStateSchema, calculateAccounting, foldAccounting, initAccounting } from './accounting.ts'
+import type { AccountingState } from './accounting.ts'
 
 const zeroBuckets = (): TokenUsageProjection => ({
   uncachedInputTokens: 0,
@@ -64,19 +64,34 @@ const tokenUsageStateSchema = z.object({
 
 type TokenUsageState = z.infer<typeof tokenUsageStateSchema>
 
-const pressureSchema: z.ZodType<ContextPressureProjection> = z.object({
+const pressureSchema = z.object({
   pressureTokens: z.number().int().nonnegative().optional(),
   projectedTokens: z.number().int().nonnegative().optional(),
   contextWindow: z.number().int().positive().optional(),
-}).strict().transform(({ pressureTokens, projectedTokens, contextWindow }) => ({
-  ...pressureTokens === undefined ? {} : { pressureTokens },
-  ...projectedTokens === undefined ? {} : { projectedTokens },
-  ...contextWindow === undefined ? {} : { contextWindow },
+  provider: z.string().optional(), model: z.string().optional(),
+  lastObservedInputTokens: z.number().int().nonnegative().optional(),
+  lastObservedProvider: z.string().optional(), lastObservedModel: z.string().optional(),
+  quality: z.enum(['observed', 'usage-supported', 'estimated', 'incomplete']).optional(),
+  unattributedTokens: z.number().int().nonnegative().optional(),
+  outputReserveTokens: z.number().int().nonnegative().optional(),
+  availableTokens: z.number().int().optional(),
+  retention: z.object({ retainTokens: z.number().int().nonnegative(), retainRatio: z.number().nonnegative().max(1).optional(), source: z.enum(['model', 'settings', 'config']) }).optional(),
+}).strict().transform(value => ({
+  ...value.pressureTokens === undefined ? {} : { pressureTokens: value.pressureTokens },
+  ...value.projectedTokens === undefined ? {} : { projectedTokens: value.projectedTokens },
+  ...value.contextWindow === undefined ? {} : { contextWindow: value.contextWindow },
+  ...value.provider === undefined ? {} : { provider: value.provider },
+  ...value.model === undefined ? {} : { model: value.model },
+  ...value.lastObservedInputTokens === undefined ? {} : { lastObservedInputTokens: value.lastObservedInputTokens },
+  ...value.lastObservedProvider === undefined ? {} : { lastObservedProvider: value.lastObservedProvider },
+  ...value.lastObservedModel === undefined ? {} : { lastObservedModel: value.lastObservedModel },
+  ...value.quality === undefined ? {} : { quality: value.quality },
+  ...value.unattributedTokens === undefined ? {} : { unattributedTokens: value.unattributedTokens },
+  ...value.outputReserveTokens === undefined ? {} : { outputReserveTokens: value.outputReserveTokens },
+  ...value.availableTokens === undefined ? {} : { availableTokens: value.availableTokens },
+  ...value.retention === undefined ? {} : { retention: { retainTokens: value.retention.retainTokens, source: value.retention.source,
+    ...value.retention.retainRatio === undefined ? {} : { retainRatio: value.retention.retainRatio } } },
 }))
-
-/** Prompt-side pressure of one request: input plus cache traffic, no output. */
-const pressureFrom = (usage: TokenUsage): number =>
-  usage.inputTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0)
 
 /** The usage one durable Assistant settlement reports for its attempt, if any. */
 function usageOf(event: SessionEvent): TokenUsage | undefined {
@@ -88,24 +103,9 @@ function usageOf(event: SessionEvent): TokenUsage | undefined {
 declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionStateMap {
     tokenUsage: TokenUsageState
-    contextPressure: ContextPressureState
+    contextPressure: AccountingState
   }
 }
-
-/** The context-pressure state schema and source of its inferred type. */
-const contextPressureStateSchema = z.object({
-  contextWindow: z.number().int().positive().optional(),
-  pressureTokens: z.number().int().nonnegative().optional(),
-  surfaceTokens: z.number().int().nonnegative(),
-  sampledSurfaceTokens: z.number().int().nonnegative().optional(),
-  claim: z.object({
-    start: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).transform(SessionSeq),
-    end: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).transform(SessionSeq),
-    tokens: z.number().int().nonnegative(),
-  }).optional(),
-}).strict()
-
-type ContextPressureState = z.infer<typeof contextPressureStateSchema>
 
 /**
  * Token-meter's session projection unit.
@@ -150,69 +150,35 @@ export const tokenUsageProjectionDefinition = {
 } satisfies ProjectionDefinition<'tokenUsage', TokenUsageState>
 
 /**
- * Token-meter's context-occupancy projection unit.
- *
- * Independent last-wins slots: the newest usage sample supplies the provider
- * numerator, the newest `request/context` record the denominator. Both are
- * whole values, so replay order alone decides the result and no cross-field
- * consistency is claimed — the pair is explicitly not one atomic request
- * observation (see {@link ContextPressureProjection}).
- *
- * `pressureTokens` is prompt-side only, so it holds still while a turn streams
- * and steps forward once the next request reports its usage. Because nothing
- * but a request reports usage, it also cannot see a compaction: the fold
- * therefore carries a running surface total alongside it and publishes
- * `projectedTokens` — the sample plus the surface's signed movement since it
- * was taken — so occupancy answers for the next request rather than the last
- * one. The total rides {@link foldSurfaceProjection}, so the state stays O(1)
- * and a replacement shrinks it by its logged shadow price. A replacement
- * without a claim preserves the previous total. A usage sample is stamped
- * BEFORE the same event joins the surface, so an `assistant/message` anchors
- * against the surface its own request saw.
+ * Complete next-input forecast, using the host measurement's pure accounting
+ * state. Historical observations retain their own route; forecast capacity
+ * never inherits an unrelated route's observation or output reserve.
  */
 export const contextPressureProjectionDefinition = {
   key: 'contextPressure',
-  stateVersion: 5,
-  stateSchema: contextPressureStateSchema,
-  init: () => ({ surfaceTokens: 0 }),
-  apply: (state, event) => {
-    const fold = foldSurfaceProjection(state.claim, event)
-    let next = state
-    if (event.type === 'request/context') {
-      const contextWindow = event.data.contextWindow
-      if (contextWindow !== state.contextWindow) {
-        if (contextWindow !== undefined) {
-          next = { ...next, contextWindow }
-        } else {
-          const { contextWindow: _removed, ...withoutContextWindow } = next
-          next = withoutContextWindow
-        }
-      }
-    }
-    const usage = usageOf(event)
-    if (usage !== undefined) {
-      const pressureTokens = pressureFrom(usage)
-      if (pressureTokens !== next.pressureTokens || next.sampledSurfaceTokens !== next.surfaceTokens) {
-        next = { ...next, pressureTokens, sampledSurfaceTokens: next.surfaceTokens }
-      }
-    }
-    if (fold.deltaTokens !== 0) {
-      next = { ...next, surfaceTokens: next.surfaceTokens + fold.deltaTokens }
-    }
-    // A defined fold.claim is always freshly built, so presence decides claim
-    // bookkeeping: no claim before or after this event leaves `next` as is.
-    if (state.claim === undefined && fold.claim === undefined) return next
-    const { claim: _expired, ...withoutClaim } = next
-    return fold.claim === undefined ? withoutClaim : { ...withoutClaim, claim: fold.claim }
-  },
+  stateVersion: 6,
+  stateSchema: accountingStateSchema,
+  init: initAccounting,
+  apply: foldAccounting,
   wire: {
     viewSchema: pressureSchema,
-    view: ({ contextWindow, pressureTokens, surfaceTokens, sampledSurfaceTokens }) => ({
-      ...contextWindow === undefined ? {} : { contextWindow },
-      ...pressureTokens === undefined ? {} : { pressureTokens },
-      ...pressureTokens === undefined || sampledSurfaceTokens === undefined
-        ? {}
-        : { projectedTokens: Math.max(0, pressureTokens + surfaceTokens - sampledSurfaceTokens) },
-    }),
+    view: (state) => {
+      const value = calculateAccounting(state)
+      return {
+        ...state.frame.provider === '' ? {} : { provider: state.frame.provider, model: state.frame.model },
+        ...state.observation === undefined ? {} : {
+          lastObservedInputTokens: state.observation.tokens, lastObservedProvider: state.observation.frame.provider,
+          lastObservedModel: state.observation.frame.model,
+        },
+        ...value.baseline.kind !== 'usage' ? {} : { pressureTokens: value.baseline.tokens },
+        projectedTokens: value.inputTokens, quality: value.quality, unattributedTokens: value.unattributedTokens,
+        ...value.contextWindow === undefined ? {} : { contextWindow: value.contextWindow },
+        ...value.outputReserveTokens === undefined ? {} : { outputReserveTokens: value.outputReserveTokens },
+        ...value.availableTokens === undefined ? {} : { availableTokens: value.availableTokens },
+        ...state.frame.retention === undefined ? {} : { retention: {
+          retainTokens: state.frame.retention.retainTokens, source: state.frame.retention.source,
+          ...state.frame.retention.retainRatio === undefined ? {} : { retainRatio: state.frame.retention.retainRatio } } },
+      }
+    },
   },
-} satisfies ProjectionDefinition<'contextPressure', ContextPressureState>
+} satisfies ProjectionDefinition<'contextPressure', AccountingState>

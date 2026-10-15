@@ -295,15 +295,17 @@ export type TypertCodec =
 export interface InvocationParameterDescriptor {
   /** Source-level parameter name. */
   readonly name: string
-  /** Required key in the wire `args` object. */
+  /** Key in the wire `args` object. */
   readonly wire: string
   /** Whether the value is JSON or requires a registered Host lookup. */
   readonly source: 'json' | 'lookup'
   /** Lookup key when `source` is `lookup`. */
   readonly lookup?: string
+  /** Authored optionality permits omitting this trailing positional argument. */
+  readonly optional?: true
   /** Boundary codec for the wire representation. */
   readonly codec: TypertCodec
-  /** Missing wire fields decode to `undefined` only for an explicitly declared `T | undefined`. */
+  /** Missing wire fields decode to `undefined` for optional parameters or an explicit `T | undefined`. */
   readonly acceptsUndefined?: true
 }
 

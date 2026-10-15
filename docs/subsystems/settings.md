@@ -80,12 +80,13 @@ Host service backing the generated `ctx.remote.settings` namespace. Every remote
 
 ```ts cordis-catalog
 /**
- * Describe every registered namespace for a configuration page: redacted
+ * Describe registered namespaces for a configuration page: redacted
  * layered values plus the serialized schema the page renders its form from.
+ * @param ns - optional namespace filter for a narrowly scoped durable form.
  * @returns provider writability, local-document presence, and one view per namespace.
  * @throws RemoteError when no settings provider is mounted.
  */
-@Remote describe(): SettingsDescribeValue
+@Remote describe(ns?: string): SettingsDescribeValue
 
 /**
  * Merge a patch into one namespace's stored user section.

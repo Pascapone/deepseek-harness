@@ -42,7 +42,7 @@ class StepwiseToolAdapter extends LlmAdapter {
       provider,
       id: model,
       name: model,
-      context: { contextWindow: 400 },
+      context: { contextWindow: 500 },
     })
   }
 
@@ -87,7 +87,8 @@ class OverflowRecoveryAdapter extends LlmAdapter {
       provider,
       id: model,
       name: model,
-      context: { contextWindow: 128 },
+      context: { contextWindow: 10_000 },
+      defaultMaxTokens: 64,
     })
   }
 
@@ -219,11 +220,8 @@ describe('CBR-001: a real-loop checkpoint is a valid boundary on both sides', ()
       await waitForIdle(ctx, agent)
 
       expect(agent.session.requestHeader()?.config.model).toBe('mock')
+      expect(agent.session.snapshotEvents().findLast(event => event.type === 'turn/end')?.data.reason).toEqual({ kind: 'completed' })
       expect(agent.session.snapshotEvents().some(event => event.type === 'compaction/summary')).toBe(true)
-      expect(agent.session.snapshotEvents().at(-1)).toMatchObject({
-        type: 'turn/end',
-        data: { reason: { kind: 'completed' } },
-      })
     } finally {
       await ctx.fiber.dispose()
     }
@@ -340,12 +338,12 @@ describe('token pressure after loop-admitted system prompts', () => {
           type: 'turn/end', data: { reason: { kind: 'completed' } },
         })
         const measured = ctx.tokenMeter.measure(agent.session)
-        expect(measured.baseline).toEqual({ kind: 'usage', tokens: 1110, usage })
-        expect(measured.surfaceDeltaTokens).toBe(0)
+        expect(measured.baseline).toEqual({ kind: 'usage', tokens: 1100, usage })
+        expect(measured.surfaceDeltaTokens).toBe(10)
         expect(measured.totalTokens).toBe(1110)
         const replay = Session.create(SessionId('prompt-pressure-replay'), agent.session.snapshotEvents())
         expect(ctx.tokenMeter.measure(replay)).toMatchObject({
-          baseline: measured.baseline, surfaceDeltaTokens: 0, totalTokens: 1110, nodes: measured.nodes,
+          baseline: measured.baseline, surfaceDeltaTokens: 10, totalTokens: 1110, nodes: measured.nodes,
         })
       }
       const events = agent.session.snapshotEvents()

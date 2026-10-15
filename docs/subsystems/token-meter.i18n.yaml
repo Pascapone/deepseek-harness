@@ -3,11 +3,14 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/subsystems/token-meter.md
 /token-meter:
-  en: 7b81394f8688ad71
-  zh: e38852d59e9793fd
+  en: 1b0f635684b7d7d6
+  zh: fcb83c28a98e4268
 /token-meter/tokenmeasurement:
-  en: 34853869e90adf31
-  zh: 285010a2f695ca01
+  en: c2e6720b5a834e6d
+  zh: fa7755d6f4724b41
+/token-meter/capturing-current-prices:
+  en: 756b1495836414b6
+  zh: 0a2ba8de7d0b77a8
 /token-meter/tokensurfacenode:
   en: e445d12b10f651d0
   zh: e93be5fb9da1da15

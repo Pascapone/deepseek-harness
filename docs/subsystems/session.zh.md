@@ -90,6 +90,10 @@ interface SessionEventMap {
     message: AssistantMessage
     /** Exact timed model stream, compacted without joining delta boundaries. */
     stream: AssistantStreamRecord[]
+    /** Captured at dispatch, not reconstructed from the surface at settlement. */
+    request?: RequestDispatch
+    /** Own-message hint under the named context's native projection, without replay blobs or usage copies. */
+    replayPrice?: { readonly contextSeq: SessionSeq; readonly price: LlmReplayPrice }
     usage?: TokenUsage
     interrupted?: true
   }
@@ -98,7 +102,7 @@ interface SessionEventMap {
    * preserves a failed, retried, cancelled, or stream-error attempt that
    * reached settlement without fabricating model-visible history.
    */
-  'assistant/attempt': { turn: number; step: number; stream: AssistantStreamRecord[] }
+  'assistant/attempt': { turn: number; step: number; stream: AssistantStreamRecord[]; request?: RequestDispatch }
   /**
    * The model requested one tool invocation: `name` with the raw `arguments`
    * JSON string exactly as the model produced it (unparsed). `callId` pairs the
@@ -140,8 +144,8 @@ interface SessionEventMap {
     startsSeries?: true
   }
   /**
-   * Route metadata for the next request, logged only when the route, capacity,
-   * or system prompt update mode changes. It does not participate in request
+   * Route, reserve, policy, and changed-only pricing facts for the next request.
+   * Logged when those facts change. It does not participate in request
    * reconstruction or header equality. Prompt admission uses the bound prepared
    * call's capability, not this snapshot from an earlier request.
    */
@@ -205,9 +209,10 @@ interface EpochHeader {
 
 当前事件接纳要求 `request/header.header` 为规范形式：禁止任何 `system` 字段，必须省略 `tools: []` 与 `adapterDefaults: {}`。仅含空白的系统消息内容、`config.stop: []` 与嵌套扩展保持不变。seed、append 与当前持久化读取拒绝非规范 header，而不会静默规范化；[V3 信封决策](../../.agents/notes/implemented/architecture/2026-09-06-v3-canonical-session-envelopes.zh.md)负责历史转换。包含旧版 `request/header-delta` 事件或完整快照原因为 `fallback` 的旧版 v0 日志，会被拒绝，而不会以不完整方式回放。
 
+<a id="the-route-capacity-event-requestcontext"></a>
 ### 路由容量事件：`request/context`
 
-请求所解析到的路由的上下文元数据是独立的已记录状态，在同一步骤内紧随 `request/header` 追加，且仅在提供方、模型、容量或 `systemPromptUpdate` 模式与上一条记录不同时追加。它保持在 `EpochHeader` 之外，因为该类型是 `headerEquals` 逐字段比较的重建约定。容量与更新模式描述的是路由，不是请求输入，把它们折叠进去会让一次路由变化被登记为请求信封的 `change`，也会把适配器元数据拉进 loop 的请求重建。与 `request/header` 一样，它不是 `SurfaceEventType`，也不产生 LLM 消息。`session.requestContext()` 以增量方式归并最新一条记录；agent loop 在决定变化后的系统提示词是替换最新的系统节点还是追加到已缓存历史之后时，读取该记录的 `systemPromptUpdate`（[决策规则](../../packages/core/agent-loop/README.zh.md#understand-the-implementation)）。适配器不公布容量的路由会以缺失 `contextWindow` 的形式记录，因此新记录可以清除较早路由的容量；未声明更新模式的路由同样会清除较早路由的 `systemPromptUpdate`。
+`request/context` 在 `EpochHeader` 之外保存绑定到注册代次的路由元数据与仅变化的定价事实。它不产生模型消息，也不改变 header 相等性。路由记录保留容量、回答预留、回放 scope、表示收据及作为提示的上次使用保留策略。缺失的容量或预留保持未知；scope 改变使旧提示失效。`replayPrices` 和 `projectionPrices` 只携带变化的消息事实，不复制完整历史。token 计量器在实时和冷回放中折叠这些记录；提示词准入仍依据已准备调用的能力，而不是较早的元数据记录。
 
 ```ts type-equiv
 /** Registration-bound metadata for one resolved model route. */
@@ -220,6 +225,33 @@ interface RequestContext {
   contextWindow?: number
   /** `'in-history'` when the route reads the latest `system` message at any position as the effective system prompt. */
   systemPromptUpdate?: SystemPromptUpdate
+  /** Response reserve before input-dependent clamping; may be a conservative native ceiling, absent means unknown. */
+  outputReserve?: number
+  /** Native replay projection identity from the frozen adapter generation. */
+  replayPricing?: LlmReplayPricingScope
+  /** Changed-only assistant hints under replayPricing; a scope change invalidates previous hints. */
+  replayPrices?: readonly LlmReplayPrice[]
+  /** Changed-only message representation receipts under this route and projection scope. */
+  projectionPrices?: readonly LlmMessageProjectionPrice[]
+  /** Estimated declaration cost after historical/deferred tool projection under the captured route policy. */
+  toolProjection?: { readonly tokens: number; readonly mode: 'none' | 'addition-only' | 'in-history' }
+  /** Advisory policy used by the most recent compaction decision, not a restriction on request history. */
+  retention?: { readonly retainTokens: number; readonly retainRatio?: number; readonly source: 'model' | 'settings' | 'config' }
+}
+```
+
+### 实际调度切点
+
+循环在准入、header 记录、价格刷新和不可变请求推导之后捕获 `RequestDispatch`。Assistant settlement 或失败 attempt 引用该确切的排他日志切点及其 header/context 事件，而不是流式调用结束时恰好存在的 surface。assistant 的可选 `replayPrice` 在捕获的 context scope 下标识自身的不可变消息。不含这些可选事实的旧 settlement 仍可读取；消费方必须把重建估算标为估算，而不能虚构调度观测。空闲压缩把预备价格保存到 `compaction/start.pricing`，不会创建对话请求。
+
+```ts type-equiv
+/** Exact immutable Session prefix and request metadata used by one dispatched attempt. */
+interface RequestDispatch {
+  readonly version: 1
+  /** Exclusive log cut whose projected history supplied the frozen request array. */
+  readonly logOffset: SessionLogOffset
+  readonly headerSeq: SessionSeq
+  readonly contextSeq: SessionSeq
 }
 ```
 

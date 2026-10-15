@@ -9,7 +9,7 @@
 
 import type { ContentBlock, TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { CommandId } from '@deepseek-ai/dsh-commands/brand'
-import type { SessionSeq } from '@deepseek-ai/dsh-session/types'
+import type { RequestContext as RequestPricingContext, SessionSeq } from '@deepseek-ai/dsh-session/types'
 import type { CompactionId } from './brand.ts'
 
 export type { CompactionId }
@@ -21,7 +21,13 @@ declare module '@deepseek-ai/dsh-session/types' {
      * `compaction/end`. A numbered owner is strictly enclosed by that open turn;
      * `null` identifies a standalone manual transaction between turns.
      */
-    'compaction/start': { compactionId: CompactionId; sourceCommandId?: CommandId; turn: number | null }
+    'compaction/start': {
+      compactionId: CompactionId
+      sourceCommandId?: CommandId
+      turn: number | null
+      /** Captured pricing facts for standalone maintenance; does not admit a model request. */
+      pricing?: RequestPricingContext
+    }
     /**
      * Completed summary, its inputs, and its model call facts — log-only, no surfaceOp.
      * The summary content is in `data.summary`; the actual surface replacement

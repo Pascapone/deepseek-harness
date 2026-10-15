@@ -713,7 +713,15 @@ const SERVICE_ROLES: ServiceRole[] = [
     mode: 'seam',
     implementations: ['compaction-basic'],
     consumers: ['compaction-basic'],
-    note: 'The basic backend consumes post-step pressure and request-error recovery events; there is no model-facing compact tool.',
+    note: 'The basic backend handles pre-step pressure and context-overflow recovery; human commands use idle maintenance.',
+  },
+  {
+    key: 'compactionRetention',
+    pkg: 'compaction-basic',
+    title: 'Compaction retention settings',
+    mode: 'service',
+    consumers: ['compaction-basic'],
+    note: 'Persists the global retention preference and validates active engines\' known model budgets before Settings writes.',
   },
   {
     key: 'subagents',

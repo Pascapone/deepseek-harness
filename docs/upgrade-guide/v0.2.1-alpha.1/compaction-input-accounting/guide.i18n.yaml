@@ -1,0 +1,16 @@
+# Bilingual-pair consistency record for guide.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/upgrade-guide/v0.2.1-alpha.1/compaction-input-accounting/guide.md
+/:
+  en: d1c937ffd389766d
+  zh: c6f3531242c0bf1d
+/input-only-accounting-and-durable-retention-settings:
+  en: ce1e40b1a959e361
+  zh: 84553915f40e5909
+/input-only-accounting-and-durable-retention-settings/change:
+  en: 29347decb766c63b
+  zh: 235b17546495462e
+/input-only-accounting-and-durable-retention-settings/migration:
+  en: f1003f17b9c053d2
+  zh: f6fa5b3d7ff70b1a

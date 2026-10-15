@@ -18,8 +18,11 @@
   en: 13415501869b4ca9
   zh: 723c7533cce3d1d6
 /llm-streaming/request-image-pricing:
-  en: 10598e1a98262415
-  zh: 7fb85b22174a1497
+  en: 31afb1c4536409ba
+  zh: e9c674e3475f3665
+/llm-streaming/native-replay-pricing:
+  en: e1356898ddddfadf
+  zh: 466368e501d476f2
 /llm-streaming/the-adapter-contract:
   en: f9dacddf34a48d66
   zh: 1a426c55909c081f
@@ -42,8 +45,8 @@
   en: f2e6932e211f179b
   zh: 75112586a6f3f4aa
 /llm-streaming/official-deepseek-request-extensions:
-  en: b19f291f094157ed
-  zh: 682f13a833e8bb52
+  en: d8df81ab53916d8f
+  zh: deec2b714c8be6cb
 /llm-streaming/service-and-provider-contracts:
-  en: 8dc79d4cc82824c2
-  zh: 3ebabd3a117ad717
+  en: 21270fac0c4cb9a2
+  zh: 5ed11b64e5cf8fbc

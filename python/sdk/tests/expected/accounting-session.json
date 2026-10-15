@@ -1,0 +1,24 @@
+{
+  "final_response": "SDK snapshot OK",
+  "finish_reason": "completed",
+  "request": {
+    "version": 1,
+    "header_type": "request/header",
+    "context_type": "request/context",
+    "cut_after_context": true
+  },
+  "context": {
+    "provider": "deepseek-official",
+    "model": "deepseek-v4-flash",
+    "capacity_known": false,
+    "reserve_known": false,
+    "tool_mode": "none"
+  },
+  "feedback": [
+    "feedback/record",
+    "feedback/record",
+    "feedback/message-put",
+    "feedback/message-put",
+    "feedback/message-delete"
+  ]
+}

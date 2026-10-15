@@ -185,7 +185,39 @@ export interface TokenUsage {
   totalTokens?: number
   cacheReadTokens?: number
   cacheWriteTokens?: number
+  /** Optional subset of outputTokens, never an additional output bucket; zero is meaningful. */
   reasoningTokens?: number
+}
+
+/** Versioned native replay projection identity, without credentials or account identifiers. */
+export interface LlmReplayPricingScope {
+  readonly version: 1
+  readonly adapter: string
+  readonly projection: string
+  readonly provider: string
+  readonly api?: string
+  readonly model: string
+}
+
+/** Compact replay eligibility and price hint for one immutable durable message. */
+export interface LlmReplayPrice {
+  readonly messageId: MessageId
+  readonly replay: 'native' | 'fallback'
+  /** usage-output references stored outputTokens, not an exact replay token count. */
+  readonly basis: 'usage-output' | 'estimate' | 'unknown'
+  /** Present only for an explicit estimate; other bases never duplicate stored usage. */
+  readonly tokens?: number
+}
+
+/** Registration-bound synchronous native replay pricing; implementations perform no I/O. */
+export interface LlmReplayRequestPricing {
+  readonly scope: LlmReplayPricingScope
+  /**
+   * Inspect ordered history using dispatch's replay conversion.
+   * @param messages - immutable request history, including tool groups.
+   * @returns assistant hints bound to message identity and this projection scope.
+   */
+  priceMessages(messages: readonly RequestMessage[]): readonly LlmReplayPrice[]
 }
 
 /**
@@ -205,9 +237,9 @@ export interface LlmImageRequestPrice {
 
 /**
  * Provider-side request-image pricing for one exact model route. Implemented
- * by adapters whose provider charges visual tokens; consumers (the token
- * meter) resolve it synchronously per measurement, so implementations must not
- * perform I/O.
+ * by adapters whose provider charges visual tokens. Request preparation and
+ * explicit token-meter refresh/preview resolve it synchronously without I/O;
+ * pure measurements consume the captured receipts instead.
  */
 export interface LlmImageRequestPricing {
   /**
@@ -217,6 +249,19 @@ export interface LlmImageRequestPricing {
    * @returns one price per occurrence, aligned by index with `images`.
    */
   priceImages(images: readonly ImageBlock[]): readonly LlmImageRequestPrice[]
+}
+
+/** Changed-only request representation receipts for one immutable durable message. */
+export interface LlmMessageProjectionPrice {
+  readonly messageId: MessageId
+  /** Total estimate of a filtered developer message; zero means omitted, not unknown. */
+  readonly projectedTokens?: number
+  readonly images?: readonly {
+    readonly retained: LlmImageRequestPrice
+    readonly offloaded: LlmImageRequestPrice
+  }[]
+  /** Exact short model-visible file handles, never file contents. */
+  readonly files?: readonly string[]
 }
 
 /** Display metadata for one registered provider route. */

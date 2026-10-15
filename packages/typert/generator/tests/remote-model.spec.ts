@@ -24,6 +24,7 @@ interface RuntimeDescriptor {
   readonly cancellation?: { readonly parameter: 'signal' }
   readonly parameters: readonly {
     readonly wire: string
+    readonly optional?: true
     readonly acceptsUndefined?: true
     readonly codec: { readonly create: () => RuntimeSchema }
   }[]
@@ -443,12 +444,15 @@ export type {`,
     const maybe = generated.TYPERT_REMOTE.descriptors.find(descriptor => descriptor.id.endsWith('/maybe'))
     const clear = generated.TYPERT_REMOTE.descriptors.find(descriptor => descriptor.id.endsWith('/clear'))
     expect(maybe?.parameters[0]?.acceptsUndefined).toBe(true)
+    expect(maybe?.parameters[0]?.optional).toBeUndefined()
     expect(maybe?.parameters[0]?.codec.create().safeParse(undefined).success).toBe(true)
     expect(maybe?.result.create().safeParse(undefined).success).toBe(true)
     expect(clear?.result.create().safeParse(undefined).success).toBe(true)
     expect(clear?.result.create().safeParse(null).success).toBe(false)
     const labelled = generated.TYPERT_REMOTE.descriptors.find(descriptor => descriptor.id.endsWith('/labelled'))
     expect(labelled?.parameters[0]?.acceptsUndefined).toBeUndefined()
+    expect(labelled?.parameters[0]?.optional).toBeUndefined()
+    expect(labelled?.parameters[1]?.optional).toBe(true)
     expect(labelled?.parameters[1]?.acceptsUndefined).toBe(true)
     expect(labelled?.parameters[1]?.codec.create().safeParse(undefined).success).toBe(true)
     expect(labelled?.parameters[1]?.codec.create().safeParse(7).success).toBe(false)

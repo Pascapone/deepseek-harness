@@ -16,6 +16,7 @@ import type {
   LlmDiscoveredModel,
   LlmFailure,
   LlmImageRequestPricing,
+  LlmReplayRequestPricing,
   LlmModelContext,
   LlmModelDiscoveryRequest,
   LlmModelInfo,
@@ -181,6 +182,12 @@ export interface PreparedLlmCall {
   readonly toolUpdate?: ToolUpdate
   /** Config fields materialized by the captured adapter rather than proposed by the caller. */
   readonly adapterDefaults: LlmCallConfigAdapterDefaults
+  /** Replay pricing captured with the exact adapter generation used by stream. */
+  readonly replayPricing?: LlmReplayRequestPricing
+  /** Synchronous image pricing captured with this adapter generation. */
+  readonly imagePricing?: LlmImageRequestPricing
+  /** Response budget before input-dependent provider clamping; may be a conservative native ceiling. */
+  readonly outputReserve?: number
   /**
    * Dispatch this call once through the registration captured during
    * preparation. The request's call-config fields must match {@link config};
@@ -195,6 +202,16 @@ export interface PreparedLlmCall {
 export interface PreparedAdapterCall {
   /** Exact model metadata from the same adapter generation as {@link stream}. */
   readonly model: LlmResolvedModelInfo
+  /** Native replay projection and price hints from that same generation. */
+  readonly replayPricing?: LlmReplayRequestPricing
+  /** Image projection from that same generation. */
+  readonly imagePricing?: LlmImageRequestPricing
+  /**
+   * Resolve a response reserve from effective controls without I/O.
+   * @param config - validated controls with adapter defaults materialized.
+   * @returns response budget before input-dependent clamping, or undefined when unknown.
+   */
+  outputReserve?(config: Readonly<LlmCallConfig>): number | undefined
   /** Dispatch through that generation without re-reading dynamic connection facts. */
   stream(options: GenerateOptions): AsyncIterable<StreamChunk>
 }
@@ -228,12 +245,22 @@ export abstract class LlmAdapter {
    * Resolve provider-side request-image pricing for one exact model route.
    * The default declares none, so consumers fall back to their own neutral
    * estimate. Implementations must answer synchronously without I/O; the
-   * token meter resolves this per measurement.
+   * token meter resolves this during explicit refresh/preview, not pure measurement.
    * @param _provider - a route passed to `registerAdapter()` for this instance.
    * @param _model - exact model id passed to {@link GenerateOptions.model}.
    * @returns route-owned image pricing, or `undefined` when the route declares none.
    */
   imageRequestPricing(_provider: string, _model: string): LlmImageRequestPricing | undefined {
+    return undefined
+  }
+
+  /**
+   * Resolve synchronous replay pricing without provider I/O.
+   * @param _provider - registered provider route.
+   * @param _model - exact model id.
+   * @returns native replay pricing, or undefined when unavailable.
+   */
+  replayRequestPricing(_provider: string, _model: string): LlmReplayRequestPricing | undefined {
     return undefined
   }
 
@@ -276,8 +303,12 @@ export abstract class LlmAdapter {
    * @returns model metadata and a one-generation stream entry point.
    */
   async prepareCall(provider: string, model: string, signal?: AbortSignal): Promise<PreparedAdapterCall> {
+    const replayPricing = this.replayRequestPricing(provider, model)
+    const imagePricing = this.imageRequestPricing(provider, model)
     return {
       model: await this.resolveModel(provider, model, signal),
+      ...replayPricing === undefined ? {} : { replayPricing },
+      ...imagePricing === undefined ? {} : { imagePricing },
       stream: options => this.stream(options),
     }
   }
@@ -671,6 +702,30 @@ export class LlmRuntime extends TypertRemoteService {
   }
 
   /**
+   * Capture replay hints for explicitly refreshing logged facts before a budget decision.
+   * Pure projections consume those facts, never this live method.
+   * @param provider - registered route, possibly absent for old logs.
+   * @param model - exact model id.
+   * @returns captured replay pricing, or undefined when unavailable.
+   */
+  replayRequestPricing(provider: string, model: string): LlmReplayRequestPricing | undefined {
+    const adapter = this.adapters.get(provider)?.adapter
+    const pricing = adapter?.replayRequestPricing(provider, model)
+    return pricing === undefined || adapter === undefined ? undefined : this.bindReplayPricing(pricing, this.replayProviders(adapter))
+  }
+
+  private replayProviders(adapter: LlmAdapter): ReadonlySet<string> {
+    return new Set([...this.adapters].filter(([, registration]) => registration.adapter === adapter).map(([provider]) => provider))
+  }
+
+  private bindReplayPricing(pricing: LlmReplayRequestPricing, providers: ReadonlySet<string>): LlmReplayRequestPricing {
+    return Object.freeze({
+      scope: deepFreeze(structuredClone(pricing.scope)),
+      priceMessages: (messages: readonly RequestMessage[]) => pricing.priceMessages(this.forReplayProviders(messages, providers)),
+    })
+  }
+
+  /**
    * Resolve the exact text one durable file occurrence contributes to every
    * provider request in the current execution environment.
    * @param ref - durable verbatim file reference from model history.
@@ -928,10 +983,15 @@ export class LlmRuntime extends TypertRemoteService {
    */
   async prepareCall(config: LlmCallConfig, signal?: AbortSignal): Promise<PreparedLlmCall> {
     const registration = this.registration(config.provider)
+    const replayProviders = this.replayProviders(registration.adapter)
     const adapterCall = await registration.adapter.prepareCall(config.provider, config.model, signal)
     const modelInfo = this.normalizeModelInfo(registration, config.model, adapterCall.model)
     const resolved = this.resolveCallWithInfo(config, modelInfo)
     const resolvedConfig = deepFreeze(structuredClone(resolved.config))
+    const outputReserve = adapterCall.outputReserve === undefined ? resolvedConfig.maxTokens : adapterCall.outputReserve(resolvedConfig)
+    if (outputReserve !== undefined && (!Number.isSafeInteger(outputReserve) || outputReserve <= 0)) {
+      throw new LlmError('adapter returned an invalid output reserve', 'INVALID_MODEL_MAX_TOKENS')
+    }
     const context = resolved.context === undefined
       ? undefined
       : deepFreeze(structuredClone(resolved.context))
@@ -948,6 +1008,10 @@ export class LlmRuntime extends TypertRemoteService {
       config: resolvedConfig,
       retryPolicy: registration.retryPolicy,
       adapterDefaults,
+      ...adapterCall.replayPricing === undefined ? {}
+        : { replayPricing: this.bindReplayPricing(adapterCall.replayPricing, replayProviders) },
+      ...adapterCall.imagePricing === undefined ? {} : { imagePricing: adapterCall.imagePricing },
+      ...outputReserve === undefined ? {} : { outputReserve },
       ...context === undefined ? {} : { context },
       ...modelInfo.inputModalities === undefined
         ? {}
@@ -969,6 +1033,7 @@ export class LlmRuntime extends TypertRemoteService {
           registration,
           config: resolvedConfig,
           modelInfo,
+          replayProviders,
           dispatch: options => adapterCall.stream(options),
         })
       },
@@ -982,17 +1047,21 @@ export class LlmRuntime extends TypertRemoteService {
   }
 
   /** Remove replay state whose historical route is owned by another adapter. */
-  private forAdapter(options: GenerateOptions, adapter: LlmAdapter): GenerateOptions {
-    const messages: RequestMessage[] = options.messages.map((message) => {
+  private forReplayProviders(messages: readonly RequestMessage[], providers: ReadonlySet<string>): RequestMessage[] {
+    return messages.map((message) => {
       if (message.role !== 'assistant') return message
       const source = message.source
       if (source.replayState === undefined) return message
-      if (this.adapters.get(source.provider)?.adapter === adapter) return message
+      if (providers.has(source.provider)) return message
       return freezeMessage({
         ...message,
         source: { kind: 'model', provider: source.provider, model: source.model },
       })
     })
+  }
+
+  private forAdapter(options: GenerateOptions, providers: ReadonlySet<string>): GenerateOptions {
+    const messages = this.forReplayProviders(options.messages, providers)
     if (messages.every((message, index) => message === options.messages[index])) return options
     const filtered = { ...options, messages }
     return Object.isFrozen(options) ? deepFreeze(filtered) : filtered
@@ -1031,6 +1100,7 @@ export class LlmRuntime extends TypertRemoteService {
     try {
       const registration = prepared?.registration ?? this.registration(options.provider)
       const adapter = registration.adapter
+      const replayProviders = prepared?.replayProviders ?? this.replayProviders(adapter)
       let modelInfo: LlmResolvedModelInfo
       let resolvedConfig: LlmCallConfig
       let dispatch: (options: GenerateOptions) => AsyncIterable<StreamChunk>
@@ -1077,7 +1147,7 @@ export class LlmRuntime extends TypertRemoteService {
         }
         if (Object.isFrozen(resolvedOptions)) deepFreeze(projectedOptions)
       }
-      const stream = dispatch(this.forAdapter(projectedOptions, adapter))
+      const stream = dispatch(this.forAdapter(projectedOptions, replayProviders))
       iterator = stream[Symbol.asyncIterator]()
     } catch (error: unknown) {
       yield adapterFailureChunk(error, options.signal)
@@ -1161,6 +1231,7 @@ interface AdapterRegistration {
 
 interface PreparedDispatch {
   readonly registration: AdapterRegistration
+  readonly replayProviders: ReadonlySet<string>
   readonly config: LlmCallConfig
   readonly modelInfo: LlmResolvedModelInfo
   readonly dispatch: (options: GenerateOptions) => AsyncIterable<StreamChunk>

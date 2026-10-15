@@ -18,50 +18,58 @@ export interface TokenUsageProjection {
 }
 
 /**
- * Approximate context occupancy for a status display.
- *
- * The fields, when present, are deliberately NOT one atomic request
- * observation: each is a last-wins record of a different moment. Switching
- * models can therefore pair a fresh capacity with the previous route's
- * pressure until the next request reports usage. This is an intentional trade
- * — the value is a user-facing reference, not a billing or gating input. See
- * the token-meter README for the full rationale.
+ * Shared complete-input forecast and separately identified historical observation.
+ * Capacity and output reserve always describe the forecast route.
  */
 export interface ContextPressureProjection {
+  /** Forecast route provider, when known. */
+  provider?: string
+  /** Forecast route model, when known. */
+  model?: string
+  /** Most recent observed input; its route may differ from the forecast route. */
+  lastObservedInputTokens?: number
+  /** Provider of the historical observation, independent of the forecast route. */
+  lastObservedProvider?: string
+  /** Model of the historical observation, independent of the forecast route. */
+  lastObservedModel?: string
+  /** Forecast evidence; incomplete means some retained input has no bounded price. */
+  quality?: 'observed' | 'usage-supported' | 'estimated' | 'incomplete'
+  /** Input cost not safely assigned to individual retained nodes. */
+  unattributedTokens?: number
+  /** Future output capacity reserved by the same route. */
+  outputReserveTokens?: number
+  /** Capacity remaining after input and output reserve; may be negative. */
+  availableTokens?: number
+  /** Original-history budget recorded for the latest request on this route. */
+  retention?: { readonly retainTokens: number; readonly retainRatio?: number; readonly source: 'model' | 'settings' | 'config' }
   /**
-   * Provider-reported prompt size of the most recent request: uncached input
-   * plus cache reads and writes. Response output is excluded, so this does not
-   * grow as the current turn streams. Absent until a provider reports usage.
+   * Compatibility alias for the observed prompt input only while its route,
+   * envelope, and pricing remain eligible for the current forecast.
    */
   pressureTokens?: number
   /**
-   * What the NEXT request's prompt would cost: {@link pressureTokens} plus the
-   * heuristic repricing of everything the surface gained or lost since that
-   * sample. Only the delta is estimated, so the figure stays anchored to the
-   * provider while still reacting the moment a compaction shadows a span —
-   * which `pressureTokens` alone cannot do, since compaction reports no usage
-   * of its own. Absent until a provider reports usage.
+   * Complete next-input forecast from the same calculator as host measurement,
+   * including durable native/media prices and signed current-surface changes.
    */
   projectedTokens?: number
-  /** Newest recorded route capacity; absent when no adapter advertised one. */
+  /** Matching forecast-route capacity; absent when unknown. */
   contextWindow?: number
 }
 
 /**
- * Heuristic composition of the next request's context: what the prompt is
- * made of, not what it costs. All three figures use the meter's fixed
- * density estimate, so they will not sum to the provider-anchored
- * `projectedTokens`: the estimator systematically underprices CJK text and
- * JSON schemas, which is exactly the error the anchoring in
- * {@link ContextPressureProjection.projectedTokens} keeps out of the occupancy
- * figure. Present these as approximations of composition, never as a total.
+ * Estimated categories from the same native/media-aware input calculation.
+ * Categories are not scaled to an observation; residual input remains unattributed.
  */
 export interface ContextBreakdownProjection {
-  /** Heuristic tokens of the last nonempty surviving system prompt in surface order; 0 when none exists. */
+  /** Observed cost not assigned to a displayed category. */
+  unattributedTokens?: number
+  /** Evidence supporting the shared next-input calculation. */
+  quality?: 'observed' | 'usage-supported' | 'estimated' | 'incomplete'
+  /** Estimated tokens of the last nonempty surviving system prompt; zero when absent. */
   systemTokens: number
-  /** Heuristic tokens of the newest request envelope's tool schemas; 0 before any request. */
+  /** Estimated tokens of the effective envelope's tool schemas; zero before a request. */
   toolsTokens: number
-  /** Heuristic tokens of every other visible surface node, including superseded system prompts. */
+  /** Estimated native/media-aware tokens of other surface nodes, including superseded prompts. */
   messageTokens: number
 }
 
@@ -69,9 +77,9 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionMap {
     /** Provider-reported usage accumulated across the complete durable log. */
     tokenUsage: TokenUsageProjection
-    /** Newest request pressure paired with the newest known route capacity. */
+    /** Shared next-input forecast with matching capacity and a separate historical observation. */
     contextPressure: ContextPressureProjection
-    /** Heuristic system/tools/message composition of the next request. */
+    /** Estimated system/tools/message attribution of the same next-input forecast. */
     contextBreakdown: ContextBreakdownProjection
   }
 }

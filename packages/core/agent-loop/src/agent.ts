@@ -16,7 +16,7 @@ import type {
   RequestErrorAction,
 } from '@deepseek-ai/dsh-agent'
 import { agentEvents, assembleContextFor } from '@deepseek-ai/dsh-agent'
-import type { GenerateOptions, LlmCallConfig, Message, PreparedLlmCall } from '@deepseek-ai/dsh-llm'
+import type { AssistantMessage, GenerateOptions, LlmCallConfig, LlmReplayPrice, Message, MessageId, PreparedLlmCall } from '@deepseek-ai/dsh-llm'
 import {
   LlmError,
   createAssistantMessage,
@@ -24,14 +24,15 @@ import {
   errorChain,
   markAgentLoopRequest,
 } from '@deepseek-ai/dsh-llm'
-import { assertNever, deepFreeze } from '@deepseek-ai/dsh-util-values'
+import { assertNever, deepEqualJson, deepFreeze } from '@deepseek-ai/dsh-util-values'
 import type { Scope } from '@deepseek-ai/dsh-scope'
 import { createScope } from '@deepseek-ai/dsh-scope'
-import type { EpochHeader, RequestContext, Session, SessionId, SessionSeq, TurnEndReason, UserMessage } from '@deepseek-ai/dsh-session'
+import type { EpochHeader, RequestContext, RequestDispatch, Session, SessionId, SessionSeq, TurnEndReason, UserMessage } from '@deepseek-ai/dsh-session'
 import { canonicalHeader, headerEquals, ToolCallRecovery } from '@deepseek-ai/dsh-session'
 import { joinContextSections, renderContextSections, renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import type { PromptAssembly } from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-session-projection'
+import type {} from '@deepseek-ai/dsh-token-meter'
 import type { Context } from '@deepseek-ai/cordis'
 import { ReactLoopInbox } from './inbox.ts'
 import { RuntimeContextProjection } from './runtime-context.ts'
@@ -109,6 +110,11 @@ export class ReactLoopAgent implements Agent {
 
   /** Whether this loop instance has appended its initial/resume request anchor. */
   private requestHeaderLogged = false
+  private requestHeaderSeq: SessionSeq | undefined
+  private requestContextSeq: SessionSeq | undefined
+  private loggedRequestContext: RequestContext | undefined
+  private replayScopeKey: string | undefined
+  private readonly replayPrices = new Map<MessageId, LlmReplayPrice>()
   /** Surface generation at attachment or the preceding built request. */
   private requestSurfaceGeneration: number
   private readonly runtimeContext: RuntimeContextProjection
@@ -422,7 +428,14 @@ export class ReactLoopAgent implements Agent {
         }
       }
       firstAttempt = false
-      const request = this.buildRequest(config, preparedCall, assembly.tools, { turn, step }, startsRequestSeries, signal)
+      const { request, dispatch } = this.buildRequest(config, preparedCall, assembly.tools, { turn, step }, startsRequestSeries, signal)
+      const ownReplayPrice = (message: AssistantMessage) => {
+        const price = preparedCall?.replayPricing?.priceMessages([...request.messages, message])
+          .find(value => value.messageId === message.id)
+        if (price === undefined) return {}
+        this.replayPrices.set(message.id, price)
+        return { replayPrice: { contextSeq: dispatch.contextSeq, price } }
+      }
       const live = new AssistantStreamAttempt(
         this.session.id,
         ++this.assistantAttemptCounter,
@@ -448,31 +461,34 @@ export class ReactLoopAgent implements Agent {
           if (signal.aborted) {
             const content = live.interruptedBlocks()
             if (content.length > 0) {
+              const message = createAssistantMessage({
+                content,
+                source: {
+                  provider: request.provider,
+                  model: request.model,
+                  ...live.replayState === undefined ? {} : { replayState: live.replayState },
+                },
+              })
               live.settle('assistant/message', () => this.session.append('assistant/message', {
                 turn,
                 step,
-                message: createAssistantMessage({
-                  content,
-                  source: {
-                    provider: request.provider,
-                    model: request.model,
-                    ...live.replayState === undefined ? {} : { replayState: live.replayState },
-                  },
-                }),
+                message,
+                ...ownReplayPrice(message),
                 interrupted: true,
+                request: dispatch,
                 ...live.usage === undefined ? {} : { usage: live.usage },
                 stream: live.stream,
               }, { surfaceOp: 'append' }).seq)
             } else {
               live.settle(
                 'assistant/attempt',
-                () => this.session.append('assistant/attempt', { turn, step, stream: live.stream }).seq,
+                () => this.session.append('assistant/attempt', { turn, step, stream: live.stream, request: dispatch }).seq,
               )
             }
           } else {
             live.settle(
               'assistant/attempt',
-              () => this.session.append('assistant/attempt', { turn, step, stream: live.stream }).seq,
+              () => this.session.append('assistant/attempt', { turn, step, stream: live.stream, request: dispatch }).seq,
             )
           }
         } catch (settlementError: unknown) {
@@ -489,7 +505,7 @@ export class ReactLoopAgent implements Agent {
         if (finish.kind === 'error' || finish.kind === 'aborted') {
           live.settle(
             'assistant/attempt',
-            () => this.session.append('assistant/attempt', { turn, step, stream: live.stream }).seq,
+            () => this.session.append('assistant/attempt', { turn, step, stream: live.stream, request: dispatch }).seq,
           )
           const action = await this.dispatch.waterfall(
             'agent/request-error', {
@@ -523,6 +539,8 @@ export class ReactLoopAgent implements Agent {
             turn,
             step,
             message,
+            request: dispatch,
+            ...ownReplayPrice(message),
             ...live.usage === undefined ? {} : { usage: live.usage },
             stream: live.stream,
           }, { surfaceOp: 'append' }).seq,
@@ -603,7 +621,7 @@ export class ReactLoopAgent implements Agent {
     position: { turn: number; step: number },
     startsRequestSeries: boolean,
     signal: AbortSignal,
-  ): GenerateOptions {
+  ): { request: GenerateOptions; dispatch: RequestDispatch } {
     const { session } = this
     const surfaceGeneration = session.surface.contentGeneration
     const header = canonicalHeader({
@@ -630,7 +648,7 @@ export class ReactLoopAgent implements Agent {
         ...startsSeries ? { startsSeries: true } : {},
       }).seq
     } else if (startsSeries) {
-      this.session.append('request/header', { header, reason: 'series' })
+      headerSeq = this.session.append('request/header', { header, reason: 'series' }).seq
     }
     if (baseline !== undefined && headerSeq !== undefined) {
       const previousNames = new Set(baseline.tools?.map(tool => tool.name))
@@ -648,26 +666,18 @@ export class ReactLoopAgent implements Agent {
       }
     }
     this.requestSurfaceGeneration = surfaceGeneration
+    if (headerSeq !== undefined) this.requestHeaderSeq = headerSeq
 
-    const contextWindow = preparedCall?.context?.contextWindow
-    const systemPromptUpdate = preparedCall?.systemPromptUpdate
-    const requestContext: RequestContext = {
-      provider: config.provider,
-      model: config.model,
-      ...contextWindow === undefined ? {} : { contextWindow },
-      ...systemPromptUpdate === undefined ? {} : { systemPromptUpdate },
-    }
-    const previousContext = session.requestContext()
-    if (previousContext?.provider !== requestContext.provider
-      || previousContext.model !== requestContext.model
-      || previousContext.contextWindow !== requestContext.contextWindow
-      || previousContext.systemPromptUpdate !== requestContext.systemPromptUpdate) {
-      session.append('request/context', requestContext)
-    }
-    signal.throwIfAborted()
+    const tokenMeter = this.loopCtx.get('tokenMeter')
+    tokenMeter?.refresh(session, header, {
+      ...preparedCall?.replayPricing === undefined ? {} : { replayRequestPricing: preparedCall.replayPricing },
+      ...preparedCall?.imagePricing === undefined ? {} : { imageRequestPricing: preparedCall.imagePricing },
+      ...preparedCall?.outputReserve === undefined ? {} : { outputReserve: preparedCall.outputReserve },
+      toolUpdate: preparedCall?.toolUpdate,
+      fileRequestText: ref => this.loopCtx.llm.fileRequestText(ref),
+    })
 
-    // canonicalHeader is shallow; append logs a detached snapshot, not these local values.
-    deepFreeze(header)
+    // This exact immutable array supplies both the price facts and the request.
     const boundaryMessages = session.deriveMessages()
     for (const message of boundaryMessages) {
       if (this.frozenMessages.has(message)) continue
@@ -675,6 +685,53 @@ export class ReactLoopAgent implements Agent {
       this.frozenMessages.add(message)
     }
     Object.freeze(boundaryMessages)
+    const pricing = preparedCall?.replayPricing
+    const scopeKey = JSON.stringify(pricing?.scope)
+    const scopeChanged = scopeKey !== this.replayScopeKey
+    if (scopeChanged) this.replayPrices.clear()
+    const previousContext = session.requestContext()
+    if (deepEqualJson(previousContext?.replayPricing, pricing?.scope)) {
+      for (const price of previousContext?.replayPrices ?? []) this.replayPrices.set(price.messageId, price)
+    }
+    const prices = pricing?.priceMessages(boundaryMessages) ?? []
+    const changedPrices = prices.filter(price => !deepEqualJson(price, this.replayPrices.get(price.messageId)))
+    this.replayScopeKey = scopeKey
+    this.replayPrices.clear()
+    for (const price of prices) this.replayPrices.set(price.messageId, price)
+    const contextWindow = preparedCall?.context?.contextWindow
+    const outputReserve = preparedCall === undefined ? config.maxTokens : preparedCall.outputReserve
+    const systemPromptUpdate = preparedCall?.systemPromptUpdate
+    const requestContext: RequestContext = {
+      provider: config.provider,
+      model: config.model,
+      ...contextWindow === undefined ? {} : { contextWindow },
+      ...systemPromptUpdate === undefined ? {} : { systemPromptUpdate },
+      ...outputReserve === undefined ? {} : { outputReserve },
+      ...pricing === undefined ? {} : { replayPricing: pricing.scope },
+      ...changedPrices.length === 0 ? {} : { replayPrices: changedPrices },
+      ...tokenMeter !== undefined && previousContext?.provider === config.provider && previousContext.model === config.model
+        && previousContext.toolProjection?.mode === (preparedCall?.toolUpdate ?? 'none')
+        ? { toolProjection: previousContext.toolProjection } : {},
+      ...previousContext?.provider === config.provider && previousContext.model === config.model && previousContext.retention !== undefined
+        ? { retention: previousContext.retention } : {},
+    }
+    if (this.requestContextSeq === undefined || previousContext !== this.loggedRequestContext
+      || scopeChanged || previousContext?.provider !== requestContext.provider
+      || previousContext.model !== requestContext.model
+      || previousContext.contextWindow !== requestContext.contextWindow
+      || previousContext.systemPromptUpdate !== requestContext.systemPromptUpdate
+      || previousContext.outputReserve !== requestContext.outputReserve
+      || !deepEqualJson(previousContext.replayPricing, requestContext.replayPricing)
+      || !deepEqualJson(previousContext.toolProjection, requestContext.toolProjection)
+      || changedPrices.length > 0) {
+      const event = session.append('request/context', requestContext)
+      this.requestContextSeq = event.seq
+      this.loggedRequestContext = session.requestContext()
+    }
+    signal.throwIfAborted()
+
+    // canonicalHeader is shallow; append logs a detached snapshot, not these local values.
+    deepFreeze(header)
     const request = markAgentLoopRequest(Object.freeze({
       ...header.config,
       messages: boundaryMessages,
@@ -683,6 +740,10 @@ export class ReactLoopAgent implements Agent {
       sessionId: this.session.id,
       signal,
     }))
-    return request
+    if (this.requestHeaderSeq === undefined) throw new Error('request metadata was not committed')
+    return {
+      request,
+      dispatch: { version: 1, logOffset: session.seq, headerSeq: this.requestHeaderSeq, contextSeq: this.requestContextSeq },
+    }
   }
 }

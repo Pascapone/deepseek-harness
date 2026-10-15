@@ -186,7 +186,13 @@ export class ConfigFormController<T> implements ConfigForm<T> {
   private derive(): void {
     if (this.disposed) return
     const mirrored = this.mirror.getSnapshot()
-    if (mirrored.view === undefined) return
+    if (mirrored.view === undefined) {
+      if (mirrored.status === 'unavailable') this.store.update((draft) => {
+        draft.status = 'unavailable'
+        draft.writable = false
+      })
+      return
+    }
     const { writable } = mirrored.view
     const view = mirrored.view.namespaces.find(candidate => candidate.ns === this.spec.namespace)
     if (view === undefined) {
@@ -287,17 +293,29 @@ export class ConfigForms extends Service {
   }
 
   /** Get the shared form values and write queue for one Host plugin entry.
+   * Remote browsers persist only compaction-retention; all other entries retain memory mode.
    * @param entryId Unique Host plugin entry id.
    * @returns The entry's form, owned by this provider.
    */
   get<T>(entryId: string): ConfigForm<T> {
     const existing = this.forms.get(entryId)
     if (existing !== undefined) return existing as ConfigFormController<T>
+    const scoped = this.persistence === 'memory' && entryId === 'compaction-retention'
+    const mirror = scoped ? new SettingsDescribeMirror(this.owner, 'host', 'compaction-retention') : this.mirror
     const form = new ConfigFormController<T>(
-      this.owner, { namespace: entryId }, this.mirror, this.persistence, this.schema,
+      this.owner, { namespace: entryId }, mirror, scoped ? 'host' : this.persistence, this.schema,
     )
     this.forms.set(entryId, form)
-    void this.mirror.ensure()
+    if (scoped) this.owner.effect(() => {
+      const disposers = [
+        this.owner.remote.$on('settings/document-updated', (ns) => {
+          if (ns === 'compaction-retention') void mirror.load()
+        }),
+        this.owner.on('connection/reset', () => { void mirror.load() }),
+      ]
+      return () => { for (const dispose of disposers) dispose() }
+    }, 'ui-settings: remote durable retention')
+    void mirror.ensure()
     return form
   }
 

@@ -89,6 +89,8 @@ Host 与 Client 是两个独立的 TypeScript 程序。直接项目引用确定�
 
 [一元二进制结果](../protocol/README.zh.md)在泛型类型解析后被识别。其 codec 校验字节数组类型与 JSON 元数据，不遍历、复制或冻结字节载荷；生成的 Client 声明保留原有元数据类型，并将字节的底层缓冲区收窄为 `ArrayBuffer`。
 
+生成的运行时描述符与 Client 声明均保留[源码中的参数可选性](../protocol/README.zh.md#exposing-a-host-method)。
+
 ### 目录投影
 
 运行时类型闭包索引导出的 workspace 声明和被引用的框架 enum。Vendor 声明不参与业务 API 发现；公共结果引用其中 enum 时，目录仍提供其定义。

@@ -2,7 +2,7 @@
 
 English | [中文](token-meter.zh.md)
 
-`@deepseek-ai/dsh-token-meter` exposes one detached replay snapshot for request pressure and positional surface pricing. `logRevision` is the number of durable events consumed for every field in the measurement.
+`@deepseek-ai/dsh-token-meter` derives input forecasts, positional prices, and client projections from the same persisted facts. `measure()` is pure: it does not consult current adapter functions or append events. `logRevision` identifies the consumed durable tail.
 
 Source: [`packages/llm/token-meter/src/types.ts`](../../packages/llm/token-meter/src/types.ts)
 
@@ -17,8 +17,37 @@ interface TokenMeasurement {
   readonly baseline: TokenMeasurementBaseline
   /** Signed repricing of current surface content relative to the baseline anchor. */
   readonly surfaceDeltaTokens: number
-  /** Non-negative current request-and-response pressure. */
+  /** Compatibility alias for inputTokens; response output is not added. */
   readonly totalTokens: number
+  /** Forecast of the complete next request input, excluding the response reserve. */
+  readonly inputTokens: number
+  /** Evidence quality for the complete forecast. */
+  readonly quality: TokenMeasurementQuality
+  /** Observed input not safely attributable to individual retained nodes. */
+  readonly unattributedTokens: number
+  /** Current estimated tool-schema cost. */
+  readonly toolsTokens: number
+  /** Current estimated effective system cost. */
+  readonly systemTokens: number
+  /** Current estimated non-system surface cost. */
+  readonly messageTokens: number
+  /** Jointly calibrated spans; finer node allocations remain estimates. */
+  readonly groups: readonly { readonly seqs: readonly SessionSeq[]; readonly tokens: number; readonly quality: TokenMeasurementQuality }[]
+  /** Most recent provider input, retaining its route and actual request cut. */
+  readonly lastObservedPrompt?: {
+    readonly tokens: number
+    readonly logOffset: SessionLogOffset
+    readonly provider: string
+    readonly model: string
+    readonly headerSeq?: SessionSeq
+    readonly contextSeq?: SessionSeq
+  }
+  /** Capacity from the same effective route as the forecast. */
+  readonly contextWindow?: number
+  /** Reserved future output, not historical output usage. */
+  readonly outputReserveTokens?: number
+  /** Capacity minus forecast input and reserved output; negative means overflow. */
+  readonly availableTokens?: number
   /** Total route-priced request tokens across the current surface; equals the sum of the node prices. */
   readonly surfaceTokens: number
   /** Current surface nodes in positional head-to-tail order. */
@@ -26,7 +55,36 @@ interface TokenMeasurement {
 }
 ```
 
-Every measurement resolves the effective envelope's routed provider/model to that route's declared request-image pricing through `ctx.llm`, so image occurrences are priced as the visual tokens plus model-visible text the request actually sends; routes and compositions without declared pricing keep the fixed heuristic. `baseline.kind === 'usage'` means the latest successful provider call has the same canonical request envelope and its total is no lower than that call's full route-priced anchor. `estimated` means no reusable conservative usage anchor exists, so the service priced the complete envelope and surface itself. A later successful request replaces the earlier anchor; signed `surfaceDeltaTokens` preserves growth and shrinkage relative to a matching anchor, repricing both sides under the same route. `totalTokens` remains request-and-response pressure, while `surfaceTokens` is the surface-only route-priced total and equals the sum of the node prices.
+Provider input is `inputTokens + cacheReadTokens + cacheWriteTokens` for one request, never a sum of historical prompts. `lastObservedPrompt` keeps that observation and its actual dispatch cut separate from the current forecast. Historical output already includes reasoning; it is neither added to input nor treated as universally exact native replay cost. An adapter's `usage-output` hint can support an estimate of retained native content, not certify its tokenization.
+
+```ts type-equiv
+/** Evidence supporting an input estimate; incomplete costs have no safe upper bound. */
+type TokenMeasurementQuality = 'observed' | 'usage-supported' | 'estimated' | 'incomplete'
+```
+
+Comparable route, header, projection, and dispatch facts permit reuse of observed input and calibration of changed spans. A group keeps a jointly measured total; finer node allocations remain estimates, and compaction must not split that group. Unattributed costs remain visible. Missing native or media prices, stale projection facts, and non-reusable residuals produce `incomplete`, not an invented zero or safe upper bound. `availableTokens` subtracts both forecast input and the route's future response reserve from capacity; cumulative billing remains a separate projection.
+
+## Capturing current prices
+
+`refresh()` captures changed-only native replay, image, file-handle, and historical/deferred tool-projection receipts into `request/context` during an open turn. The effective tool schemas must already be logged in `request/header`; a supplied header cannot silently replace them. `preview()` performs the same calculation without appending, including before idle compaction. Standalone maintenance commits its captured facts on `compaction/start.pricing`. Both paths use the dispatch-bound pricing snapshot when supplied; an explicitly unknown reserve remains unknown.
+
+```ts type-equiv
+/** Prepared functions bound to the adapter revision used for actual dispatch. */
+interface TokenPricingSnapshot {
+  /** Native replay pricing from the prepared call, or absent when unsupported. */
+  readonly replayRequestPricing?: LlmReplayRequestPricing
+  /** Request image projection from the same prepared adapter. */
+  readonly imageRequestPricing?: LlmImageRequestPricing
+  /** Actual prepared response ceiling, which may exceed a caller's plain cap. */
+  readonly outputReserve?: number
+  /** Present even when undefined for a prepared route that does not support developer updates. */
+  readonly toolUpdate?: ToolUpdate | undefined
+  /** Exact file-handle projection used for dispatch. */
+  readonly fileRequestText?: (ref: Extract<Message['content'][number], { type: 'file' }>['attachment']) => string
+}
+```
+
+Cold replay, resume, and fork consume those receipts through the same pure calculator. Old logs remain readable but cannot acquire missing provider evidence retroactively. [LLM pricing](llm-streaming.md#native-replay-pricing) owns adapter hints; [Session metadata](session.md#the-route-capacity-event-requestcontext) owns their durable references.
 
 ## `TokenSurfaceNode`
 
@@ -48,6 +106,12 @@ interface TokenSurfaceNode {
    * projection fold stays in agreement with its own appends.
    */
   readonly heuristicTokens: number
+  /** Evidence for this node's allocation, not an exact provider tokenization. */
+  readonly quality?: TokenMeasurementQuality
+  /** First node of an inseparable calibrated span, when present. */
+  readonly costGroupStartSeq?: SessionSeq
+  /** Last node of an inseparable calibrated span, when present. */
+  readonly costGroupEndSeq?: SessionSeq
 }
 ```
 
@@ -65,42 +129,41 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 
 ### `ctx.tokenMeter` — `TokenMeter`
 
-Replay owner for one service-wide estimator and isolated per-session folds.
+Measures persisted facts; explicit refresh/preview alone consult live pricing.
 
 ```ts cordis-catalog
-/**
- * Measure current request pressure and surface through the durable tail.
- *
- * The effective envelope's routed provider/model selects the request-image
- * pricing every node is priced under: a route whose adapter declares image
- * pricing charges each retained image its visual tokens plus its
- * model-visible text, while other routes keep the fixed heuristic. Provider
- * usage is reused only when the latest successful call's canonical request
- * envelope matches `requestHeader` and its total is no lower than that
- * call's full route-priced anchor; otherwise the complete envelope and
- * surface are repriced. The anchor includes all surface nodes immediately
- * before the assistant message, including inputs admitted after step/start.
- *
- * `requestHeader` replaces the latest logged envelope for pressure and node
- * pricing; the node set always describes the current session surface. Every
- * call clones those positional nodes, so measurement is O(surface).
- *
- * @param session - session to replay through its current durable tail.
- * @param requestHeader - optional effective request envelope replacing the latest logged header.
- * @returns a detached deeply immutable pressure and surface measurement.
+/** Read a pure input-only estimate from durable price and usage facts.
+ * @param session - session to measure through its committed tail.
+ * @param requestHeader - optional effective envelope; does not materialize prices.
+ * @returns detached immutable measurement shared with the client projections.
  */
 measure(session: Session, requestHeader?: EpochHeader): TokenMeasurement
 
-/**
- * Heuristically price one model-visible message (instance face of the pure
- * `estimateMessage` export from `estimate.ts`).
+/** Materialize changed-only adapter and attachment receipts without a model call.
+ * Call under the caller's session transaction before pressure decisions or dispatch.
+ * @param session - session whose current surface should be priced.
+ * @param requestHeader - effective envelope; tool schemas must already be logged.
+ * @param snapshot - prepared dispatch pricing; omission resolves current runtime hooks.
+ * @returns the pure measurement after any changed facts were committed.
+ */
+refresh(session: Session, requestHeader?: EpochHeader, snapshot?: TokenPricingSnapshot): TokenMeasurement
+
+/** Capture prices without appending; manual compaction persists context on its start event.
+ * @param session - session whose current surface should be priced.
+ * @param requestHeader - effective envelope, defaulting to the logged header.
+ * @param snapshot - optional prepared dispatch pricing functions.
+ * @returns prospective measurement and changed context facts for the caller to commit.
+ */
+preview( session: Session, requestHeader?: EpochHeader, snapshot?: TokenPricingSnapshot, ): { measurement: TokenMeasurement; context?: RequestContext }
+
+/** Price one message with the route-independent shadow-price heuristic.
  * @param message - message to price without mutation.
- * @returns content and role-framing tokens under the fixed service heuristic.
+ * @returns heuristic tokens, not a native replay estimate.
  */
 estimateMessage(message: Message): number
 ```
 
-Types: [EpochHeader](session.md) · [Message](llm-streaming.md) · [Session](session.md)
+Types: [EpochHeader](session.md) · [Message](llm-streaming.md) · [RequestContext](session.md) · [Session](session.md)
 
 Source: [`packages/llm/token-meter/src/index.ts`](../../packages/llm/token-meter/src/index.ts)
 <!-- END GENERATED cordis-surface -->

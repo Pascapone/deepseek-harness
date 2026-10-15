@@ -62,6 +62,8 @@ for await (const chunk of ctx.llm.stream({
 
 ### 你可以做什么
 
+适配器可以提供同步的 `replayRequestPricing(provider, model)`，供调用方显式记录原生回放价格提示。`prepareCall()` 捕获与分派相同的价格能力和历史路由所有权；独立投影读取已记录事实，而不解析实时适配器。`usage-output` 引用 assistant 已有的 `outputTokens`，只是基于用量的提示，不是未来回放的精确价格。`reasoningTokens` 是 output 的可选子集，零值有意义，不能再次相加。已准备调用还保留可选的 `imagePricing` 用于记录表示形式收据，并在提供方按输入缩减上限前根据有效调用控制解析 `outputReserve`；调用方上限不获保证时，提供方可以保守预留原生上限。
+
 - **流式发起一次模型调用**——`ctx.llm.stream(options)` 为任何已注册提供方与模型产出原始分片（token 级增量）；消费方用 `BlockAssembler` 组装。
 - **注册提供方适配器**——一个适配器拥有一个或多个提供方路由，其注册会捕获该路由的重试策略；重复注册同一路由会以 `DUPLICATE_ADAPTER` 失败。
 - **通过配置暴露并激活提供方**——适配器声明可配置提供方路由与 settings namespace，配置界面因此可以激活休眠提供方并编辑连接信息，无需重启。`LlmConfigurableProvider.error` 报告供修复的配置诊断；未受影响的模型仍可提供服务。

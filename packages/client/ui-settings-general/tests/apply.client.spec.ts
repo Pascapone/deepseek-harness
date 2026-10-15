@@ -13,6 +13,8 @@ import { createClientTest, type TestClient, webApp } from '@deepseek-ai/dsh-clie
 import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
 import { LOCALE_SETTINGS_NAMESPACE, LocaleSettingsSchema } from '@deepseek-ai/dsh-client-locale/src/locale-settings.ts'
 import { inject } from '../src/client/index.ts'
+import z from '@deepseek-ai/schemastery'
+import { RetentionSection, type RetentionSectionInjected } from '../src/client/RetentionSection.tsx'
 import type { DeveloperToolsRowInjected } from '../src/client/DeveloperToolsRow.tsx'
 import { CloseLabel, HeaderContent, TriggerContent } from '../src/client/chrome.tsx'
 import { GeneralSection } from '../src/client/GeneralSection.tsx'
@@ -76,6 +78,11 @@ function actionInjectedOf(c: TestClient): SettingsDocumentActionInjected {
   return (entry.inject as unknown as () => SettingsDocumentActionInjected)()
 }
 
+function retentionInjectedOf(c: TestClient): RetentionSectionInjected {
+  const entry = c.ctx.slots.entries('settings.section').find(row => row.component === RetentionSection)!
+  return entry.inject!() as RetentionSectionInjected & Record<string, unknown>
+}
+
 function expectSeated(c: TestClient): void {
   for (const [name, component] of SEATS) {
     expect(ownEntries(c, name).map(entry => entry.component)).toEqual([component])
@@ -88,6 +95,85 @@ function setPageUrl(url: string): void {
 }
 
 describe('ui-settings-general apply', () => {
+  it('persists only remote retention with stale-revision recovery and disables it after an authorization refusal', async ({ mock, start }) => {
+    const loopbackUrl = location.href
+    setPageUrl('https://example.test/')
+    onTestFinished(() => { setPageUrl(loopbackUrl) })
+    const settings = mock.remote.settings
+    const view: SettingsNamespaceView = {
+      ns: 'compaction-retention',
+      schema: JSON.parse(JSON.stringify(z.object({ retention: z.object({ mode: z.string(), value: z.number() }) }).toJSON())) as SettingsNamespaceView['schema'],
+      value: { retention: { mode: 'tokens', value: 20_000 } },
+      autoGenerate: true, applies: 'live', revision: 3, secrets: [],
+    }
+    settings.describe.mockResolvedValue(ok({ writable: true, hasDocument: false, namespaces: [view] }))
+    const c = await start()
+    const injected = retentionInjectedOf(c)
+    await vi.waitFor(() => { expect(injected.hooks.retention.getSnapshot().status).toBe('ready') })
+    expect(injected.hooks.retention.getSnapshot().mode).toBe('host')
+    expect(await c.ctx.configForms.get('ui-settings').set('enabled', true)).toBe(false)
+    expect(settings.mutate).not.toHaveBeenCalled()
+    const preference = { mode: 'ratio' as const, value: 0.05 }
+    settings.mutate.mockResolvedValueOnce({ ok: false, error: {
+      isDSHRemoteError: true, name: 'RemoteError', code: 'settings/conflict', message: 'stale revision',
+      details: { ns: 'compaction-retention', expected: 3, actual: 4 },
+    } })
+    settings.describe.mockResolvedValue(ok({ writable: true, hasDocument: false, namespaces: [{ ...view, revision: 4 }] }))
+    expect(await injected.saveRetention(preference, 3)).toBe(false)
+    expect(settings.mutate).toHaveBeenLastCalledWith('compaction-retention', [{ op: 'set', path: ['retention'], value: preference }], 3)
+    expect(injected.hooks.retention.getSnapshot()).toMatchObject({ revision: 4, value: view.value })
+    settings.mutate.mockResolvedValueOnce(ok({ ...view, revision: 5, value: { retention: preference } }))
+    expect(await injected.saveRetention(preference, 4)).toBe(true)
+    expect(injected.hooks.retention.getSnapshot().value).toEqual({ retention: preference })
+    settings.describe.mockRejectedValue(new Error('Authentication required'))
+    c.connection.reconnect()
+    await c.mock.streams.opened('$events', 2)
+    await vi.waitFor(() => { expect(injected.hooks.retention.getSnapshot().writable).toBe(false) })
+    expect(c.mock.log.calls('settings/describe').every(call => call.args[0] === 'compaction-retention')).toBe(true)
+    expect(c.mock.log.calls('settings/mutate').every(call => call.args[0] === 'compaction-retention')).toBe(true)
+    expect(ownEntries(c, 'settings.action')).toEqual([])
+    expect(c.ctx.configForms.describe().getSnapshot().view).toBeUndefined()
+  }, COLD_BOOT_TIMEOUT_MS)
+
+  it('keeps remote retention visibly unavailable and read-only when the initial authenticated read is denied', async ({ mock, start }) => {
+    const loopbackUrl = location.href
+    setPageUrl('https://example.test/')
+    onTestFinished(() => { setPageUrl(loopbackUrl) })
+    mock.remote.settings.describe.mockRejectedValue(new Error('Authentication required'))
+    const c = await start()
+    const injected = retentionInjectedOf(c)
+    await vi.waitFor(() => { expect(injected.hooks.retention.getSnapshot()).toMatchObject({ status: 'unavailable', writable: false, mode: 'host' }) })
+    expect(c.mock.log.calls('settings/describe').every(call => call.args[0] === 'compaction-retention')).toBe(true)
+    expect(mock.remote.settings.mutate).not.toHaveBeenCalled()
+  }, COLD_BOOT_TIMEOUT_MS)
+
+  it('mounts retention only while its Host namespace is served and saves one revision-fenced preference', async ({ mock, start }) => {
+    const { c, settings } = await client(mock, start)
+    const entry = () => c.ctx.slots.entries('settings.section').find(row => row.component === RetentionSection)
+    expect(entry()).toBeUndefined()
+    const view: SettingsNamespaceView = {
+      ns: 'compaction-retention',
+      schema: JSON.parse(JSON.stringify(z.object({ retention: z.object({ mode: z.string(), value: z.number() }) }).toJSON())) as SettingsNamespaceView['schema'],
+      value: { retention: { mode: 'tokens', value: 20_000 } },
+      autoGenerate: true, applies: 'live', revision: 3, secrets: [],
+    }
+    settings.describe.mockResolvedValue(ok({ writable: true, hasDocument: false, namespaces: [localeView('zh'), view] }))
+    c.connection.reconnect()
+    await c.mock.streams.opened('$events', 2)
+    await vi.waitFor(() => { expect(entry()).toBeDefined() })
+    expect(entry()?.options.id).toBe('context-compaction')
+    expect(resolveSlotLabel(entry()!.options.label)).toBe('上下文与压缩')
+    const injected = retentionInjectedOf(c)
+    const preference = { mode: 'ratio' as const, value: 0.05 }
+    settings.mutate.mockResolvedValueOnce(ok({ ...view, value: { retention: preference }, revision: 4 }))
+    expect(await injected.saveRetention(preference, 3)).toBe(true)
+    expect(settings.mutate).toHaveBeenLastCalledWith('compaction-retention', [{ op: 'set', path: ['retention'], value: preference }], 3)
+    expect(injected.hooks.retention.getSnapshot().value).toEqual({ retention: preference })
+    await c.unload(SELF)
+    await c.flush()
+    expect(entry()).toBeUndefined()
+  }, COLD_BOOT_TIMEOUT_MS)
+
   it('declares the services it uses', () => {
     expect(inject).toEqual(['slots', 'locale', 'connection', 'remote', 'remote.settings', 'configForms', 'shortcuts'])
   })
@@ -195,8 +281,9 @@ describe('ui-settings-general apply', () => {
     const { c } = await client(mock, start)
     expect(c.connection.isLoopback).toBe(false)
     expect(ownEntries(c, 'settings.action')).toEqual([])
-    // Off-loopback settings stay process-local: no describe read, so the browser language stands.
-    expect(c.mock.log.calls('settings/describe')).toEqual([])
+    // Only retention opts in to durable Host settings; language and document access stay local.
+    expect(c.mock.log.calls('settings/describe').length).toBeGreaterThan(0)
+    expect(c.mock.log.calls('settings/describe').every(call => call.args[0] === 'compaction-retention')).toBe(true)
     expect(c.ctx.locale.getSnapshot().active).toBe('en')
     await c.unload(SELF)
     await c.flush()

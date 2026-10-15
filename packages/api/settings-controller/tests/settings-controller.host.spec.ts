@@ -46,6 +46,17 @@ describe('settings Remote', () => {
     expect(remoteErrorOf(failure)?.code).toBe('gateway/internal')
   })
 
+  it('describes only the requested namespace without exposing the host document', async () => {
+    const { controller } = await boot()
+    const scoped = controller.describe('default-model')
+    expect(scoped.hasDocument).toBe(false)
+    expect(scoped.namespaces.map(row => row.ns)).toEqual(['default-model'])
+    expect(JSON.stringify(scoped)).not.toContain('private')
+    expect(controller.describe('missing').namespaces).toEqual([])
+    expect(() => controller.describe('')).toThrow('invalid namespace')
+    expect(controller.describe().namespaces.length).toBeGreaterThan(1)
+  })
+
   it('opens the profile patch and contains opener failure and cancellation', async () => {
     const { ctx, profile } = await configurationFixture()
     const openTextFile = vi.fn(async (_path: string, _signal: AbortSignal) => {})

@@ -1,8 +1,4 @@
-/** Composer context-occupancy meter: a ring and percentage below the card fed by the
- * `contextPressure` projection, with a click-open panel of the heuristic
- * `contextBreakdown` composition (system prompt, tools, conversation).
- * Renders nothing until a provider reports both pressure and a route
- * capacity. */
+/** Current input forecast and response reserve, separate from the last request's actual input. */
 
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -18,19 +14,19 @@ import css from './ContextMeter.module.css'
 const RADIUS = 5.5
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS
 
-/**
- * Marker the localized occupancy sentence is split on, so the panel headline
- * keeps the reading in its own tone while each locale still owns the word
- * order (`45% of context used` / `上下文已用 45%`).
- */
-const READING_SLOT = '\u0000'
-
-/** Panel legend rows, in bar-segment order; each color class carries the shared swatch/segment tint. */
+/** Breakdown counts keep their own estimated basis; they never scale to measured usage. */
 const ROWS = [
-  { key: 'systemTokens', label: 'context.system', color: css.colorSystem },
-  { key: 'toolsTokens', label: 'context.tools', color: css.colorTools },
-  { key: 'messageTokens', label: 'context.messages', color: css.colorMessages },
+  { key: 'systemTokens', label: 'context.system' },
+  { key: 'toolsTokens', label: 'context.tools' },
+  { key: 'messageTokens', label: 'context.messages' },
 ] as const
+
+const QUALITY = {
+  observed: 'context.quality.observed',
+  'usage-supported': 'context.quality.usage-supported',
+  estimated: 'context.quality.estimated',
+  incomplete: 'context.quality.incomplete',
+} as const
 
 /**
  * Format a token count for the compact context panel.
@@ -60,7 +56,7 @@ export function ContextMeter({ useProjection, t }: ContextMeterProps) {
   const rootRef = useRef<HTMLSpanElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
   const context = contextOccupancy(pressure)
-  const available = context !== null
+  const available = context !== null || pressure?.lastObservedInputTokens !== undefined
   const position = useAnchoredPosition({
     open: open && available,
     anchorRef: rootRef,
@@ -71,8 +67,7 @@ export function ContextMeter({ useProjection, t }: ContextMeterProps) {
   })
   useDismissOnOutsidePointer(rootRef, open && available, setOpen, panelRef)
 
-  // A model switch can temporarily remove capacity while this component stays
-  // mounted. Close the now-unavailable panel instead of preserving stale UI.
+  // A missing projection closes the panel; unknown capacity still has useful counts.
   useEffect(() => {
     if (!available && open) setOpen(false)
   }, [available, open])
@@ -80,52 +75,54 @@ export function ContextMeter({ useProjection, t }: ContextMeterProps) {
   useEffect(() => {
     if (!open || !available) return
     const onKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key === 'Escape') {
+        setOpen(false)
+        rootRef.current?.querySelector('button')?.focus()
+      }
     }
     document.addEventListener('keydown', onKeyDown)
     return () => { document.removeEventListener('keydown', onKeyDown) }
   }, [available, open])
 
-  if (context === null) return null
-  const percent = context.percent
-  const reading = `${percent}%`
-  const [headBefore = '', headAfter = ''] = t('context.aria', { percent: READING_SLOT })
-    .split(READING_SLOT)
-    .map(part => part.trim())
-
-  // The bar's overall length stays the provider-exact percent; the heuristic
-  // breakdown only proportions its colored parts. A zero-width part is dropped
-  // instead of rendered: `.segment`'s min-width keeps a hairline part visible,
-  // which at 0% occupancy would draw a filled bar over an empty context.
-  const breakdownTotal = breakdown === undefined
-    ? 0
-    : breakdown.systemTokens + breakdown.toolsTokens + breakdown.messageTokens
-  const parts = breakdown === undefined || breakdownTotal === 0
-    ? [{ key: 'total', color: undefined, width: percent }]
-    : ROWS.map(row => ({ key: row.key, color: row.color, width: percent * breakdown[row.key] / breakdownTotal }))
-  const segments = parts.filter(part => part.width > 0)
+  if (!available) return null
+  const quality = context === null ? 'incomplete' : pressure?.quality ?? 'estimated'
+  const approximate = (value: number) => t('context.approximate', { value: formatTokens(value, t) })
+  const percent = context?.percent
+  const baseReading = context === null ? t('context.unknown')
+    : percent === undefined ? t('context.tokens', { value: approximate(context.usedTokens) })
+      : t('context.percent', { value: quality === 'observed' ? String(percent) : t('context.approximate', { value: String(percent) }) })
+  const reading = quality === 'incomplete' && context !== null
+    ? t('context.uncertainReading', { value: baseReading }) : baseReading
+  const label = t('context.aria', { percent: reading, quality: t(QUALITY[quality]) })
+  const reserve = pressure?.outputReserveTokens
+  const remaining = pressure?.availableTokens
+  const critical = remaining !== undefined && remaining < 0
+  const residual = pressure?.unattributedTokens ?? breakdown?.unattributedTokens
+  const route = (provider: string | undefined, model: string | undefined) => t('context.route', {
+    provider: provider ?? t('context.unknown'), model: model ?? t('context.unknown'),
+  })
 
   return (
-    <span ref={rootRef} className={css.root}>
-      <Tooltip label={t('context.aria', { percent: reading })} side="top" delayMs={200} disabled={open}>
+    <span ref={rootRef} className={css.root} data-critical={critical || undefined}>
+      <Tooltip label={label} side="top" delayMs={200} disabled={open}>
         <button
           type="button"
           className={css.trigger}
-          aria-label={t('context.aria', { percent: reading })}
+          aria-label={label}
           aria-haspopup="dialog"
           aria-expanded={open}
           onClick={() => { setOpen(!open) }}
         >
           <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden>
             <circle className={css.track} cx="7" cy="7" r={RADIUS} />
-            <circle
+            {percent !== undefined && <circle
               className={css.fill}
               cx="7"
               cy="7"
               r={RADIUS}
               strokeDasharray={`${CIRCUMFERENCE * percent / 100} ${CIRCUMFERENCE}`}
               transform="rotate(-90 7 7)"
-            />
+            />}
           </svg>
           <span>{reading}</span>
         </button>
@@ -139,38 +136,43 @@ export function ContextMeter({ useProjection, t }: ContextMeterProps) {
           aria-label={t('context.used')}
         >
           <div className={css.header}>
-            {/* Empty sides collapse through `.headline:empty` so the locale that
-                needs no leading (or trailing) text spends no header gap. */}
-            <span className={css.headline}>{headBefore}</span>
-            <span className={css.percent}>{reading}</span>
-            <span className={css.headline}>{headAfter}</span>
-            {/* `~`: usedTokens prefers projectedTokens, whose surface delta is
-                heuristically repriced on top of the provider-anchored sample. */}
-            <span className={css.figures}>
-              {`~${formatTokens(context.usedTokens, t)} / ${formatTokens(context.contextWindow, t)}`}
-            </span>
+            <span className={css.figures}>{t('context.used')}</span>
+            <span>{t(QUALITY[quality])}</span>
           </div>
-          <div className={css.bar}>
-            {segments.map(segment => (
-              <div
-                key={segment.key}
-                className={segment.color === undefined ? css.segment : `${css.segment} ${segment.color}`}
-                style={{ width: `${segment.width}%` }}
-              />
-            ))}
-          </div>
+          {percent !== undefined && <div className={css.bar} aria-hidden>
+            {percent > 0 && <div className={css.segment} style={{ width: `${percent}%` }} />}
+            {reserve !== undefined && reserve > 0 && context?.contextWindow !== undefined
+              && <div className={`${css.segment} ${css.reserve}`} style={{ width: `${Math.min(100, reserve / context.contextWindow * 100)}%` }} />}
+          </div>}
+          <dl className={css.rows}>
+            <div className={css.row}>
+              <dt>{t('context.observed')}<span className={css.route}>{route(pressure?.lastObservedProvider, pressure?.lastObservedModel)}</span></dt>
+              <dd>{pressure?.lastObservedInputTokens === undefined ? t('context.notReported') : formatTokens(pressure.lastObservedInputTokens, t)}</dd>
+            </div>
+            <div className={css.row}>
+              <dt>{t('context.forecast')}<span className={css.route}>{route(pressure?.provider, pressure?.model)}</span></dt>
+              <dd>{context === null ? t('context.unknown') : quality === 'observed' ? formatTokens(context.usedTokens, t) : approximate(context.usedTokens)}</dd>
+            </div>
+            <div className={css.row}><dt>{t('context.reserve')}</dt><dd>{reserve === undefined ? t('context.unknown') : formatTokens(reserve, t)}</dd></div>
+            <div className={css.row}><dt>{t('context.remaining')}</dt><dd>{critical
+              ? t('context.overBudget', { value: formatTokens(-remaining, t) })
+              : quality === 'incomplete' || remaining === undefined ? t('context.unknown') : approximate(remaining)}</dd></div>
+            <div className={css.row}><dt>{t('context.capacity')}</dt><dd>{context?.contextWindow === undefined ? t('context.unknown') : formatTokens(context.contextWindow, t)}</dd></div>
+            {residual !== undefined && residual > 0 && <div className={css.row}><dt>{t('context.unattributed')}</dt><dd>{approximate(residual)}</dd></div>}
+          </dl>
+          {quality === 'incomplete' && <p className={css.note}>{t('context.incomplete')}</p>}
           {breakdown !== undefined && (
-            <dl className={css.rows}>
-              {ROWS.map(row => (
-                <div key={row.key} className={css.row}>
-                  <dt>
-                    <span className={`${css.swatch} ${row.color}`} aria-hidden />
-                    {t(row.label)}
-                  </dt>
-                  <dd>{`~${formatTokens(breakdown[row.key], t)}`}</dd>
-                </div>
-              ))}
-            </dl>
+            <section aria-label={t('context.breakdown')}>
+              <p className={css.note}>{t('context.breakdown')}</p>
+              <dl className={css.rows}>
+                {ROWS.map(row => (
+                  <div key={row.key} className={css.row}>
+                    <dt>{t(row.label)}</dt>
+                    <dd>{approximate(breakdown[row.key])}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
           )}
         </div>,
         document.body,

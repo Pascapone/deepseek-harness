@@ -20,10 +20,11 @@ import type { CommandId } from '@deepseek-ai/dsh-commands/brand'
 import { createUserMessage, errorChain } from '@deepseek-ai/dsh-llm'
 import type { Message, UserMessage } from '@deepseek-ai/dsh-llm'
 import type { TokenMeasurement, TokenMeter } from '@deepseek-ai/dsh-token-meter'
-import { SessionSeq, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { SessionSeq, type Session, type SessionEvent, type RequestContext } from '@deepseek-ai/dsh-session'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { frameSummary } from './summarizer.ts'
 import type { SummarizationInput, SummaryResult } from './summarizer.ts'
+import { CompactionBudgetError } from './config.ts'
 interface RegionDependencies {
   readonly meter: TokenMeter
   summarize(input: SummarizationInput, agent: Agent, signal?: AbortSignal): Promise<SummaryResult>
@@ -62,6 +63,8 @@ interface CompactionTransactionOptions {
   readonly flush?: () => Promise<void>
   /** Manual command that initiated this transaction, when present. */
   readonly sourceCommandId?: CommandId
+  /** Idle maintenance facts, committed with the opening marker only. */
+  readonly pricing?: RequestContext
 }
 
 interface CompactionEntryState {
@@ -142,9 +145,11 @@ export function selectCompactableRange(
   }
   if (keepFromIdx <= firstIdx) return null
 
+  const groupBoundaries = groupCuts(measurement)
+  if (!groupBoundaries[firstIdx]) return null
   while (keepFromIdx > firstIdx) {
     // oxlint-disable-next-line typescript/no-non-null-assertion
-    if (toolPairingBalancedBefore(session, surfaceNodes[keepFromIdx]!)) break
+    if (groupBoundaries[keepFromIdx] && toolPairingBalancedBefore(session, surfaceNodes[keepFromIdx]!)) break
     keepFromIdx -= 1
   }
   if (keepFromIdx <= firstIdx) return null
@@ -161,6 +166,46 @@ export function selectCompactableRange(
     }
   }
   return { start: first, end: cutoff }
+}
+
+/** Resolve prefix ends that keep both tool pairs and jointly measured spans intact.
+ * @param session - authoritative ordered surface.
+ * @param measurement - current complete node/group prices.
+ * @param start - inclusive selection start.
+ * @param end - inclusive original selection end.
+ * @returns safe endpoints in increasing surface order.
+ */
+export function safeCompactionEnds(session: Session, measurement: TokenMeasurement, start: SessionSeq, end: SessionSeq): SessionSeq[] {
+  const selection = validateSurfaceRegion(session, start, end)
+  const cuts = groupCuts(measurement)
+  if (!cuts[selection.startIdx]) throw new Error('compaction: start would split a jointly measured cost group')
+  return session.surface.nodes.slice(selection.startIdx, selection.endIdx + 1).filter((seq, index) => (
+    cuts[selection.startIdx + index + 1] && toolPairingBalancedAfter(session, seq)
+  ))
+}
+
+/** Allowed gaps in physical surface order; difference counts keep overlapping spans linear. */
+function groupCuts(measurement: TokenMeasurement): boolean[] {
+  const positions = new Map(measurement.nodes.map((node, index) => [node.seq, index]))
+  const changes = Array<number>(measurement.nodes.length + 2).fill(0)
+  for (const group of measurement.groups) {
+    let first = measurement.nodes.length
+    let last = -1
+    for (const seq of group.seqs) {
+      const index = positions.get(seq)
+      if (index === undefined) continue
+      first = Math.min(first, index)
+      last = Math.max(last, index)
+    }
+    if (last < 0) continue
+    changes[first + 1] = (changes[first + 1] ?? 0) + 1
+    changes[last + 1] = (changes[last + 1] ?? 0) - 1
+  }
+  let crossing = 0
+  return changes.slice(0, measurement.nodes.length + 1).map((change) => {
+    crossing += change
+    return crossing === 0
+  })
 }
 
 /**
@@ -216,7 +261,7 @@ export async function compactSurfaceRegion(
     ...options.sourceCommandId === undefined ? {} : { sourceCommandId: options.sourceCommandId },
     turn: owner,
   }
-  const startEvent = session.append('compaction/start', lifecycle)
+  const startEvent = session.append('compaction/start', { ...lifecycle, ...options.pricing === undefined ? {} : { pricing: options.pricing } })
   const assertStable: StabilityCheck = options.stability === 'whole-surface'
     ? assertWholeSurfaceUnchanged
     : assertSelectedSpanStable
@@ -373,6 +418,8 @@ function prepareCompaction(
   selection: SurfaceSelection,
 ): PreparedCompaction {
   const measurement = dependencies.meter.measure(session)
+  const cuts = groupCuts(measurement)
+  if (!cuts[selection.startIdx] || !cuts[selection.endIdx + 1]) throw new Error('compaction: selected range would split a jointly measured cost group')
   const selectedNodes = measurement.nodes.slice(selection.startIdx, selection.endIdx + 1)
   if (selectedNodes.length !== selection.shadowedSeqs.length
     || selectedNodes.some((node, index) => node.seq !== selection.shadowedSeqs[index])) {
@@ -425,7 +472,7 @@ async function summarizeCompaction(
   // question — does the replacement lower the next request's pressure.
   const framedSummaryTokenCount = dependencies.meter.estimateMessage(checkpointMessage)
   if (framedSummaryTokenCount >= prepared.shadowedRouteTokenCount) {
-    throw new Error(
+    throw new CompactionBudgetError(
       `summary is not smaller than the shadowed content (${framedSummaryTokenCount} estimated framed tokens >= ${prepared.shadowedRouteTokenCount})`,
     )
   }
@@ -539,18 +586,18 @@ function completeCompaction(
 }
 
 /**
- * Reconstruct the last routed request's cacheable prefix for the shadowed
+ * Reconstruct the last routed request's prefix for the shadowed
  * region: the system prompt held by the `system/message` at surface node 0,
  * the header's tool schemas, then the region's own derived messages in surface
- * order. The summarizer appends only the compaction instruction after this, so
- * the call is a genuine prefix of the conversation and reuses the provider's
- * KV cache. A surface without a system head, or whose head projects to no
+ * order. The summarizer appends the compaction instruction after this; matching
+ * target controls permit cache reuse when the route's tool projection preserves
+ * that prefix. A surface without a system head, or whose head projects to no
  * message, contributes no leading system message.
  * @param session - session supplying the surface head, request header, and per-node projection.
  * @param shadowedSeqs - the surface-node seqs, in order, being compacted.
  * @returns the replayed conversation prefix to condense.
  */
-function buildSummarizationInput(
+export function buildSummarizationInput(
   session: Session,
   shadowedSeqs: readonly SessionSeq[],
 ): SummarizationInput {

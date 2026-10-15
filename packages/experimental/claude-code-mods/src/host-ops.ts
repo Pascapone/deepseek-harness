@@ -405,8 +405,8 @@ export function createHostOps(options: HostOpsOptions): OpTable<AgentBinding> {
     'session.messages': (_input, context) => sessionMessages(requireAgent(context, 'session.messages').session.deriveMessages(), aliases),
     'session.usage': (_input, context): SessionUsage => {
       const agent = requireAgent(context, 'session.usage')
-      const pressure = projection(agent.session, 'contextPressure')
-      const tokens = pressure?.pressureTokens
+      const pressure = ctx.get('sessionProjections')?.snapshot(agent.session).values.contextPressure
+      const tokens = pressure?.projectedTokens
       const window = pressure?.contextWindow ?? 0
       return {
         startedAt: agent.session.header.createdAt,

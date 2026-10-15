@@ -62,6 +62,8 @@ interface ResolvedPolicyFields {
 
 /** Validated immutable config whose target-specific defaults remain unresolved. */
 export type ResolvedConfig = ResolvedPolicyFields & ResolvedRetention & {
+  /** Whether engine configuration explicitly set a retention form. */
+  readonly explicitRetention: boolean
   readonly modelPolicies: readonly Readonly<ModelCompactPolicyConfig>[]
   readonly auto: boolean
 }
@@ -69,6 +71,10 @@ export type ResolvedConfig = ResolvedPolicyFields & ResolvedRetention & {
 /** Fully merged policy for one routed conversation target, before capacity scaling. */
 export type ResolvedTargetPolicy = ResolvedPolicyFields & ResolvedRetention & {
   readonly target: Pick<LlmCallConfig, 'provider' | 'model'>
+  /** Winning retention owner for request metadata. */
+  readonly retentionSource: 'model' | 'settings' | 'config'
+  /** False only when retention comes entirely from implicit engine defaults. */
+  readonly explicitRetention: boolean
 }
 
 /** One routed model's concrete pressure and retention budget. */
@@ -76,5 +82,7 @@ export type ResolvedCompactSpec = Omit<ResolvedTargetPolicy, 'retainRatio' | 're
   /** Adapter-declared full window; token budgets below exclude reserved output tokens. */
   readonly contextWindow: number
   readonly thresholdTokens: number
+  /** Inclusive maximum post-compaction input; operations also reserve feasible headroom. */
+  readonly targetTokens: number
   readonly retainTokens: number
 }

@@ -50,6 +50,7 @@ import type {
   LlmModelInfo,
   LlmProviderInfo,
   LlmResolvedModelInfo,
+  LlmReplayRequestPricing,
   PreparedAdapterCall,
   ReasoningEffortId as ReasoningEffortIdType,
   ResolvedRetryPolicy,
@@ -61,6 +62,7 @@ import type { ResolvedPiAiProviderProfile } from './config.ts'
 import { toPiContext } from './context.ts'
 import { createModels, getSupportedThinkingLevels } from './models.ts'
 import { toStreamChunks } from './stream.ts'
+import { piOutputReserve, piReplayRequestPricing } from './replay-pricing.ts'
 
 /** One resolution's frozen view: the profiles and the collection built from them. */
 interface PiAiSnapshot {
@@ -317,10 +319,19 @@ export class PiAiAdapter extends LlmAdapter {
 
   override prepareCall(provider: string, model: string, _signal?: AbortSignal): Promise<PreparedAdapterCall> {
     const snapshot = this.current()
+    const nativeModel = this.modelOf(snapshot, provider, model)
+    const profile = this.profileOf(snapshot, provider)
     return Promise.resolve({
       model: this.modelInfo(snapshot, provider, model),
+      replayPricing: piReplayRequestPricing(nativeModel),
+      outputReserve: config => piOutputReserve(nativeModel, config.maxTokens,
+        resolveReasoningLevel(nativeModel, config.reasoningEffort ?? profile.reasoning), profile.thinkingBudgets),
       stream: options => this.streamWithSnapshot(options, snapshot),
     })
+  }
+
+  override replayRequestPricing(provider: string, model: string): LlmReplayRequestPricing {
+    return piReplayRequestPricing(this.modelOf(this.current(), provider, model))
   }
 
   stream(options: GenerateOptions): AsyncIterable<StreamChunk> {

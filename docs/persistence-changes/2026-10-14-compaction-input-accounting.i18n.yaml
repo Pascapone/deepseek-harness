@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for 2026-10-14-compaction-input-accounting.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-10-14-compaction-input-accounting.md
+/:
+  en: 3d5a424ae7d7e46b
+  zh: c22a8e4a62d8cc1a
+/2026-10-14-compaction-input-accounting:
+  en: 2dbb91cd458c6851
+  zh: ef381e0093709b8c
+/2026-10-14-compaction-input-accounting/summary:
+  en: 58d430c72ea68a06
+  zh: aced90ddd55fb2ce
+/2026-10-14-compaction-input-accounting/table-of-contents:
+  en: 6cf314a069ceb451
+  zh: 9adff678e9ecab3b
+/2026-10-14-compaction-input-accounting/declaration:
+  en: 6907136f28e48c90
+  zh: 02f8298485f3d8e7
+/2026-10-14-compaction-input-accounting/compatibility:
+  en: 7d10cf411eb09d47
+  zh: f1c84c1634324ddf
+/2026-10-14-compaction-input-accounting/verification:
+  en: 1edb733a61148b1a
+  zh: c431f4860fe8358f
+/2026-10-14-compaction-input-accounting/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

@@ -49,6 +49,15 @@ const MODEL_POLICY_KEYS: ReadonlySet<string> = new Set([
   ...POLICY_CONFIG_KEYS,
 ])
 
+/** A safe request or summary budget cannot be established or reached. */
+export class CompactionBudgetError extends Error {
+  /** @param message - failed budget and actionable limitation. */
+  constructor(message: string) {
+    super(message)
+    this.name = 'CompactionBudgetError'
+  }
+}
+
 /** Target-specific pressure configuration failure eligible for warning suppression. */
 export class TargetPressureConfigError extends Error {
   /**
@@ -106,6 +115,7 @@ export function resolveConfig(config: BasicCompactionConfig = {}): ResolvedConfi
     maxOverflowRetries: config.maxOverflowRetries ?? 1,
     modelPolicies,
     auto: config.auto ?? true,
+    explicitRetention: config.retainTokens !== undefined || config.retainRatio !== undefined,
   })
 }
 
@@ -113,11 +123,13 @@ export function resolveConfig(config: BasicCompactionConfig = {}): ResolvedConfi
  * Merge the exact provider/model override over the validated default policy.
  * @param config - validated service defaults and override table.
  * @param target - exact durable provider/model route to match.
+ * @param retentionOverride - operation-snapshotted Settings retention, below exact-model overrides.
  * @returns detached immutable policy before model-capacity scaling.
  */
 export function resolveTargetPolicy(
   config: ResolvedConfig,
   target: Pick<LlmCallConfig, 'provider' | 'model'>,
+  retentionOverride: Pick<CompactionPolicyConfig, 'retainTokens' | 'retainRatio'> = {},
 ): ResolvedTargetPolicy {
   const override = config.modelPolicies.find(policy => (
     policy.provider === target.provider && policy.model === target.model
@@ -125,11 +137,18 @@ export function resolveTargetPolicy(
   const inheritedRetention: ResolvedRetention = config.retainTokens === undefined
     ? { retainRatio: config.retainRatio }
     : { retainTokens: config.retainTokens }
+  validatePolicy(retentionOverride, 'compaction retention settings')
+  const settingsExplicit = retentionOverride.retainTokens !== undefined || retentionOverride.retainRatio !== undefined
+  const modelExplicit = override?.retainTokens !== undefined || override?.retainRatio !== undefined
+  const retention = resolveRetention(override ?? {}, resolveRetention(retentionOverride, inheritedRetention))
+  validateRatioRetention(override?.thresholdRatio ?? config.thresholdRatio, retention, 'compaction retention settings')
   return deepFreeze({
     target: { provider: target.provider, model: target.model },
     thresholdRatio: override?.thresholdRatio ?? config.thresholdRatio,
     headroomTokens: override?.headroomTokens ?? config.headroomTokens,
-    ...resolveRetention(override ?? {}, inheritedRetention),
+    ...retention,
+    retentionSource: modelExplicit ? 'model' : settingsExplicit ? 'settings' : 'config',
+    explicitRetention: modelExplicit || settingsExplicit || config.explicitRetention,
     summarizationProvider: override?.summarizationProvider ?? config.summarizationProvider,
     summarizationModel: override?.summarizationModel ?? config.summarizationModel,
     maxTokens: override?.maxTokens ?? config.maxTokens,
@@ -207,7 +226,10 @@ export function resolveCompactSpec(
     contextWindow,
     thresholdRatio: policy.thresholdRatio,
     thresholdTokens,
+    targetTokens: thresholdTokens - 1,
     retainTokens,
+    retentionSource: policy.retentionSource,
+    explicitRetention: policy.explicitRetention,
     summarizationProvider: policy.summarizationProvider,
     summarizationModel: policy.summarizationModel,
     maxTokens: policy.maxTokens,

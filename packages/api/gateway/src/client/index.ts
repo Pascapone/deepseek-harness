@@ -492,12 +492,15 @@ class ClientRemoteService extends Service implements ClientRemote {
     boundIdentity?: BoundContextIdentity,
   ): PreparedClientInvocation {
     const endpoint = endpointOf(descriptor)
-    const expected = descriptor.parameters.length - (projection?.parameterIndex === undefined ? 0 : 1)
+    const parameters = descriptor.parameters.filter((_parameter, index) => index !== projection?.parameterIndex)
+    const expected = parameters.length
+    const required = parameters.findLastIndex(parameter => parameter.optional !== true) + 1
     const hasCallerSignal = descriptor.cancellation !== undefined && values.length === expected + 1
-    if (values.length !== expected && !hasCallerSignal) {
+    if (values.length < required || (values.length > expected && !hasCallerSignal)) {
+      const count = required === expected ? String(expected) : `${String(required)}-${String(expected)}`
       const contract = descriptor.cancellation === undefined
-        ? `${String(expected)} argument(s)`
-        : `${String(expected)} business argument(s) plus an optional AbortSignal`
+        ? `${count} argument(s)`
+        : `${count} business argument(s) plus an optional AbortSignal`
       throw new Error(
         `client api: ${endpoint} expected ${contract}, got ${String(values.length)}`,
       )

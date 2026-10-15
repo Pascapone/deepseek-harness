@@ -254,7 +254,7 @@ interface LlmFailure {
 
 ## Request-image pricing
 
-An adapter whose provider charges visual tokens for request images declares per-route pricing by overriding `LlmAdapter.imageRequestPricing`, and `ctx.llm.imageRequestPricing(provider, model)` resolves it synchronously for consumers. The token meter resolves the routed model's pricing on every measurement so compaction pressure, retention, and range selection price image history as the routed request actually sends it; the DeepSeek adapter prices each retained occurrence at its per-model request target with the published vision accounting and each occurrence selected by a logged image-offload decision as its placeholder text, while provider usage remains the authoritative anchor for completed requests.
+An adapter declares per-route image pricing through `LlmAdapter.imageRequestPricing`; prepared calls capture that generation's function. The token meter's explicit refresh or preview captures retained-image and offloaded-image receipts, including model-visible text, so pure measurements and cold replay do not consult a different live adapter. Provider usage remains the observation for completed requests; declared visual prices remain estimates where tokenization is not known.
 
 ```ts type-equiv
 /**
@@ -276,9 +276,9 @@ interface LlmImageRequestPrice {
 ```ts type-equiv
 /**
  * Provider-side request-image pricing for one exact model route. Implemented
- * by adapters whose provider charges visual tokens; consumers (the token
- * meter) resolve it synchronously per measurement, so implementations must not
- * perform I/O.
+ * by adapters whose provider charges visual tokens. Request preparation and
+ * explicit token-meter refresh/preview resolve it synchronously without I/O;
+ * pure measurements consume the captured receipts instead.
  */
 interface LlmImageRequestPricing {
   /**
@@ -288,6 +288,65 @@ interface LlmImageRequestPricing {
    * @returns one price per occurrence, aligned by index with `images`.
    */
   priceImages(images: readonly ImageBlock[]): readonly LlmImageRequestPrice[]
+}
+```
+
+<a id="native-replay-pricing"></a>
+## Native replay pricing
+
+`LlmAdapter.replayRequestPricing()` supplies bounded synchronous hints using the same native replay conversion as dispatch, without network I/O. The versioned scope distinguishes adapter, projection, route, native model, and optional API. A changed scope invalidates previous hints; matching a display model name alone is insufficient. `usage-output` references stored output usage without copying it or declaring exact replay cost. `unknown` preserves missing coverage instead of inventing a safe estimate.
+
+```ts type-equiv
+/** Versioned native replay projection identity, without credentials or account identifiers. */
+interface LlmReplayPricingScope {
+  readonly version: 1
+  readonly adapter: string
+  readonly projection: string
+  readonly provider: string
+  readonly api?: string
+  readonly model: string
+}
+```
+
+```ts type-equiv
+/** Compact replay eligibility and price hint for one immutable durable message. */
+interface LlmReplayPrice {
+  readonly messageId: MessageId
+  readonly replay: 'native' | 'fallback'
+  /** usage-output references stored outputTokens, not an exact replay token count. */
+  readonly basis: 'usage-output' | 'estimate' | 'unknown'
+  /** Present only for an explicit estimate; other bases never duplicate stored usage. */
+  readonly tokens?: number
+}
+```
+
+```ts type-equiv
+/** Registration-bound synchronous native replay pricing; implementations perform no I/O. */
+interface LlmReplayRequestPricing {
+  readonly scope: LlmReplayPricingScope
+  /**
+   * Inspect ordered history using dispatch's replay conversion.
+   * @param messages - immutable request history, including tool groups.
+   * @returns assistant hints bound to message identity and this projection scope.
+   */
+  priceMessages(messages: readonly RequestMessage[]): readonly LlmReplayPrice[]
+}
+```
+
+The meter also records changed-only representation receipts after image, file-handle, and historical/deferred tool projection. A developer receipt with `projectedTokens: 0` means the route omitted that message; an absent receipt means unknown. File receipts contain short model-visible handles, not file contents. [Session metadata](session.md#the-route-capacity-event-requestcontext) binds these facts to the route; [the meter](token-meter.md) owns their accounting.
+
+```ts type-equiv
+/** Changed-only request representation receipts for one immutable durable message. */
+interface LlmMessageProjectionPrice {
+  readonly messageId: MessageId
+  /** Total estimate of a filtered developer message; zero means omitted, not unknown. */
+  readonly projectedTokens?: number
+  readonly images?: readonly {
+    readonly retained: LlmImageRequestPrice
+    readonly offloaded: LlmImageRequestPrice
+  }[]
+  /** Exact short model-visible file handles, never file contents. */
+  readonly files?: readonly string[]
 }
 ```
 
@@ -357,6 +416,7 @@ interface TokenUsage {
   totalTokens?: number
   cacheReadTokens?: number
   cacheWriteTokens?: number
+  /** Optional subset of outputTokens, never an additional output bucket; zero is meaningful. */
   reasoningTokens?: number
 }
 ```
@@ -778,6 +838,7 @@ interface LlmCallConfigAdapterDefaults {
 
 The [wire reference](../deepseek-llm-api-wire-extensions.md) defines the exact request headers, extension transaction, field versions, and receiver obligations. The shipped composition registers [`dsh_session_log`](../../packages/session/session-log-deepseek/README.md) as a lossless incremental canonical-log suffix and [`dsh_plugin_packages`](../../packages/llm/plugin-package-inventory-deepseek/README.md) as the complete active Loader-backed package set. These fields remain outside model messages and are absent from the pi-ai adapter path.
 
+<a id="service-and-provider-contracts"></a>
 ## Service and provider contracts
 
 `LlmAdapter` is the provider contract: subclass, implement `stream()`, and register one adapter instance with `ctx.llm.registerAdapter(providers, adapter)`. `GenerateOptions.provider` selects the registered adapter; `GenerateOptions.model` is passed to that adapter and need not be registered at lifecycle start. Duplicate provider routes fail atomically. Optional `providerRetryPolicy()` is captured per route with normal defaults, while `providerInfo()` and asynchronous `listModels()` feed `LlmRuntime.listProviders()` / `listModels()` with detached selector metadata. That catalog is advisory rather than a request whitelist: the adapter remains authoritative and may accept unlisted model ids. One asynchronous `resolveModel()` query returns exact model identity plus optional correctness-sensitive context capacity, an adapter-configured `defaultMaxTokens`, and ordered model-owned reasoning ids with an optional deployment default; absent fields mean unavailable metadata or provider-owned behavior, not invalid catalog membership. The resolver receives optional cancellation and must settle promptly after abort. `LlmRuntime.resolveModelInfo()` validates and detaches the aggregate. At the final adapter boundary, `resolveCallConfig()` materializes the output default only when `maxTokens` is absent and validates and materializes reasoning, so direct calls cannot bypass either configured behavior; direct dispatch captures one registration before awaiting that resolution. The agent loop instead uses `prepareCall()` to keep the same registration across model resolution, durable header logging, and dispatch, retain detached context metadata from that exact lookup, and report which config fields the adapter defaulted. Adapter lookup happens at the terminal continuation of the `llm/stream` waterfall, so a listener may short-circuit the call or route a mutable one-shot request before lookup. AgentLoop observes a request attempt once the outer waterfall returns a stream handle; that limited boundary does not prove a lazy terminal adapter was constructed or began provider I/O. The `block-start` / `block-end` `index` correlation and the assembler together mean an adapter only has to emit well-formed chunks — block reassembly is not each adapter's problem. [architecture.md](../architecture.md#turn-flow) shows where `ctx.llm.stream()` and the `llm/stream` waterfall sit in one turn.
@@ -799,6 +860,12 @@ interface PreparedLlmCall {
   readonly toolUpdate?: ToolUpdate
   /** Config fields materialized by the captured adapter rather than proposed by the caller. */
   readonly adapterDefaults: LlmCallConfigAdapterDefaults
+  /** Replay pricing captured with the exact adapter generation used by stream. */
+  readonly replayPricing?: LlmReplayRequestPricing
+  /** Synchronous image pricing captured with this adapter generation. */
+  readonly imagePricing?: LlmImageRequestPricing
+  /** Response budget before input-dependent provider clamping; may be a conservative native ceiling. */
+  readonly outputReserve?: number
   /**
    * Dispatch this call once through the registration captured during
    * preparation. The request's call-config fields must match {@link config};
@@ -806,6 +873,28 @@ interface PreparedLlmCall {
    * @param options - fully assembled request carrying the prepared config.
    * @returns the chunk stream, including the `llm/stream` waterfall.
    */
+  stream(options: GenerateOptions): AsyncIterable<StreamChunk>
+}
+```
+
+Prepared calls retain native replay and media pricing alongside route metadata. An adapter's `outputReserve(config)` result is authoritative even when it is `undefined`; callers must not replace that unknown result with a convenient cap. A prepared call rejects call-config changes made later by `llm/stream` rather than dispatching under a route different from its saved pricing. Mutable, unprepared one-shot calls retain their existing routing behavior.
+
+```ts type-equiv
+/** One adapter-owned model-resolution generation bound to its eventual stream call. */
+interface PreparedAdapterCall {
+  /** Exact model metadata from the same adapter generation as {@link stream}. */
+  readonly model: LlmResolvedModelInfo
+  /** Native replay projection and price hints from that same generation. */
+  readonly replayPricing?: LlmReplayRequestPricing
+  /** Image projection from that same generation. */
+  readonly imagePricing?: LlmImageRequestPricing
+  /**
+   * Resolve a response reserve from effective controls without I/O.
+   * @param config - validated controls with adapter defaults materialized.
+   * @returns response budget before input-dependent clamping, or undefined when unknown.
+   */
+  outputReserve?(config: Readonly<LlmCallConfig>): number | undefined
+  /** Dispatch through that generation without re-reading dynamic connection facts. */
   stream(options: GenerateOptions): AsyncIterable<StreamChunk>
 }
 ```
@@ -834,12 +923,19 @@ declare abstract class LlmAdapter {
    * Resolve provider-side request-image pricing for one exact model route.
    * The default declares none, so consumers fall back to their own neutral
    * estimate. Implementations must answer synchronously without I/O; the
-   * token meter resolves this per measurement.
+   * token meter resolves this during explicit refresh/preview, not pure measurement.
    * @param _provider - a route passed to `registerAdapter()` for this instance.
    * @param _model - exact model id passed to {@link GenerateOptions.model}.
    * @returns route-owned image pricing, or `undefined` when the route declares none.
    */
   imageRequestPricing(_provider: string, _model: string): LlmImageRequestPricing | undefined;
+  /**
+   * Resolve synchronous replay pricing without provider I/O.
+   * @param _provider - registered provider route.
+   * @param _model - exact model id.
+   * @returns native replay pricing, or undefined when unavailable.
+   */
+  replayRequestPricing(_provider: string, _model: string): LlmReplayRequestPricing | undefined;
   /**
    * List models this adapter can currently advertise for one owned provider.
    * Core routing accepts unlisted model ids; catalog-driven entry points such
@@ -1009,6 +1105,15 @@ providerRetryPolicy(provider: string): ResolvedRetryPolicy
  * @returns the owning adapter's image pricing for the route, when declared.
  */
 imageRequestPricing(provider: string, model: string): LlmImageRequestPricing | undefined
+
+/**
+ * Capture replay hints for explicitly refreshing logged facts before a budget decision.
+ * Pure projections consume those facts, never this live method.
+ * @param provider - registered route, possibly absent for old logs.
+ * @param model - exact model id.
+ * @returns captured replay pricing, or undefined when unavailable.
+ */
+replayRequestPricing(provider: string, model: string): LlmReplayRequestPricing | undefined
 
 /**
  * Resolve the exact text one durable file occurrence contributes to every

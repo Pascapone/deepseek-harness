@@ -2,24 +2,27 @@ import type { ContextPressureProjection } from '@deepseek-ai/dsh-token-meter/cli
 
 /** Context usage rendered by conversation and Chat status surfaces. */
 export interface ContextOccupancy {
-  percent: number
+  percent?: number
   usedTokens: number
-  contextWindow: number
+  contextWindow?: number
 }
 
 /**
- * Resolve bounded display occupancy from independently updated pressure fields.
+ * Resolve forecast occupancy without mixing a historical observation with current capacity.
  * @param pressure - latest token-meter projection.
- * @returns occupancy, or null until numerator and capacity are known.
+ * @returns forecast counts with a percentage only for known capacity, or null without a forecast.
  */
 export function contextOccupancy(
   pressure: ContextPressureProjection | undefined,
 ): ContextOccupancy | null {
-  const usedTokens = pressure?.projectedTokens ?? pressure?.pressureTokens
-  if (usedTokens === undefined || pressure?.contextWindow === undefined) return null
+  const usedTokens = pressure?.projectedTokens
+  if (usedTokens === undefined) return null
+  const contextWindow = pressure?.contextWindow
   return {
-    percent: Math.min(100, Math.round(usedTokens / pressure.contextWindow * 100)),
     usedTokens,
-    contextWindow: pressure.contextWindow,
+    ...contextWindow === undefined || !Number.isFinite(contextWindow) || contextWindow <= 0 ? {} : {
+      percent: Math.max(0, Math.min(100, Math.round(usedTokens / contextWindow * 100))),
+      contextWindow,
+    },
   }
 }

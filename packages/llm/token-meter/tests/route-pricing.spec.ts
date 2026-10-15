@@ -86,7 +86,9 @@ async function harness(pricing: (model: string) => LlmImageRequestPricing | unde
   const llm = new LlmRuntime(ctx)
   llm.registerAdapter(['mock'], new PricingAdapter(pricing))
   const meter = new TokenMeter(ctx)
-  return { ctx, meter, session: Session.create(SessionId('route-priced'), undefined, undefined, undefined, [imageOffloadProjection]) }
+  const session = Session.create(SessionId('route-priced'), undefined, undefined, undefined, [imageOffloadProjection])
+  session.append('turn/start', { turn: 1 })
+  return { ctx, meter, session }
 }
 
 /** Route price of one image-bearing message under the fixed pricing double. */
@@ -116,6 +118,34 @@ function appendSuccessfulCall(session: Session, value: EpochHeader, usage?: Toke
 }
 
 describe('request projection pricing', () => {
+  it('keeps reads pure and invalidates old calibration when captured media prices change', async () => {
+    let visualTokens = 100
+    const { ctx, meter, session } = await harness(() => ({
+      priceImages: images => images.map(() => ({ visualTokens, text: HANDLE_TEXT })),
+    }))
+    session.append('user/message', imageMessage('changing'), { surfaceOp: 'append' })
+    session.append('request/header', { header: header('vision'), reason: 'initial' })
+    meter.refresh(session)
+    appendSuccessfulCall(session, header('vision'), { inputTokens: 500, outputTokens: 20 })
+    const original = meter.measure(session)
+    const revision = session.seq
+    visualTokens = 200
+    expect(meter.measure(session)).toEqual(original)
+    expect(session.seq).toBe(revision)
+    const repriced = meter.refresh(session)
+    expect(repriced.baseline.kind).toBe('estimated')
+    expect(repriced.unattributedTokens).toBe(original.unattributedTokens)
+    expect(repriced.inputTokens).toBe(original.inputTokens + 100)
+    expect(repriced.quality).toBe('incomplete')
+    expect(repriced.lastObservedPrompt?.tokens).toBe(500)
+    expect(ctx.sessionProjections.snapshot(session).values.contextPressure?.projectedTokens).toBe(repriced.inputTokens)
+    const nextRevision = session.seq
+    meter.refresh(session)
+    expect(session.seq).toBe(nextRevision)
+    const cold = Session.create(SessionId('changed-media-cold'), session.snapshotEvents())
+    expect(meter.measure(cold).inputTokens).toBe(repriced.inputTokens)
+  })
+
   it('prices file blocks as the exact handle text dispatched to the provider', async () => {
     const { meter, session } = await harness(() => undefined)
     const ref = fileRef('archive.zip')
@@ -125,7 +155,8 @@ describe('request projection pricing', () => {
     })
     session.append('user/message', message, { surfaceOp: 'append' })
 
-    const measurement = meter.measure(session)
+    session.append('request/header', { header: header('files'), reason: 'initial' })
+    const measurement = meter.refresh(session)
     const projected = projectFilesToText([message], file => `/sandbox/${file.name}`)[0]
     if (projected === undefined) throw new Error('missing projected file message')
     expect(measurement.nodes[0]?.tokens).toBe(estimateMessage(projected))
@@ -138,7 +169,7 @@ describe('request projection pricing', () => {
     session.append('user/message', message, { surfaceOp: 'append' })
     session.append('request/header', { header: header('vision'), reason: 'initial' })
 
-    const measurement = meter.measure(session)
+    const measurement = meter.refresh(session)
     const expectedNode = routedMessageTokens(message)
     expect(measurement.nodes).toHaveLength(1)
     const node = measurement.nodes[0]!
@@ -149,8 +180,8 @@ describe('request projection pricing', () => {
     expect(measurement.surfaceTokens).toBe(expectedNode)
     expect(measurement.totalTokens).toBe(expectedNode)
     const breakdown = ctx.sessionProjections.snapshot(session).values.contextBreakdown
-    expect(breakdown).toEqual({ systemTokens: 0, toolsTokens: 0, messageTokens: estimateMessage(message) })
-    expect(breakdown?.messageTokens).not.toBe(measurement.surfaceTokens)
+    expect(breakdown).toMatchObject({ systemTokens: 0, toolsTokens: 0, messageTokens: expectedNode })
+    expect(breakdown?.messageTokens).toBe(measurement.surfaceTokens)
   })
 
   it('adds a post-anchor image at its routed price on top of provider usage', async () => {
@@ -158,14 +189,14 @@ describe('request projection pricing', () => {
     const usage: TokenUsage = { inputTokens: 5000, outputTokens: 50 }
     appendSuccessfulCall(session, header('vision'), usage)
     const before = meter.measure(session)
-    expect(before.baseline).toMatchObject({ kind: 'usage', tokens: 5050 })
+    expect(before.baseline).toMatchObject({ kind: 'usage', tokens: 5000 })
 
     const message = imageMessage('fresh')
     session.append('user/message', message, { surfaceOp: 'append' })
-    const after = meter.measure(session)
-    expect(after.baseline).toMatchObject({ kind: 'usage', tokens: 5050 })
+    const after = meter.refresh(session)
+    expect(after.baseline).toMatchObject({ kind: 'usage', tokens: 5000 })
     expect(after.surfaceDeltaTokens - before.surfaceDeltaTokens).toBe(routedMessageTokens(message))
-    expect(after.totalTokens).toBe(5050 + after.surfaceDeltaTokens)
+    expect(after.totalTokens).toBe(5000 + after.surfaceDeltaTokens)
   })
 
   it('reprices the surface under the substitution pricing of a text-only route', async () => {
@@ -178,14 +209,15 @@ describe('request projection pricing', () => {
     session.append('user/message', message, { surfaceOp: 'append' })
     session.append('request/header', { header: header('vision'), reason: 'initial' })
 
-    const textOnly = meter.measure(session, header('text-only'))
+    const vision = meter.refresh(session)
+    const textOnly = meter.refresh(session, header('text-only'))
     const imageFree = estimateMessage({
       ...message,
       content: message.content.filter(block => block.type !== 'image'),
     })
     expect(textOnly.nodes[0]!.tokens)
       .toBe(imageFree + estimateContent([{ type: 'text', text: placeholder }]))
-    expect(textOnly.totalTokens).toBeLessThan(meter.measure(session).totalTokens)
+    expect(textOnly.totalTokens).toBeLessThan(vision.totalTokens)
   })
 
   it('keeps the fixed heuristic for routes and services that declare no pricing', async () => {
@@ -211,13 +243,12 @@ describe('request projection pricing', () => {
         : { visualTokens: VISUAL_TOKENS, text: HANDLE_TEXT })),
     }
     const { ctx, meter, session } = await harness(() => markedPricing)
-    session.append('turn/start', { turn: 1 })
     const older = imageMessage('older')
     const newer = imageMessage('newer')
     const olderSeq = session.append('user/message', older, { surfaceOp: 'append' }).seq
     session.append('user/message', newer, { surfaceOp: 'append' })
     session.append('request/header', { header: header('vision'), reason: 'initial' })
-    const before = meter.measure(session)
+    const before = meter.refresh(session)
     expect(before.nodes.map(node => node.tokens)).toEqual([routedMessageTokens(older), routedMessageTokens(newer)])
 
     session.append('image/offload', { targets: [{ seq: olderSeq, imageIndexes: [0] }] })
@@ -229,7 +260,7 @@ describe('request projection pricing', () => {
     expect(after.nodes.map(node => node.seq)).toEqual(before.nodes.map(node => node.seq))
     expect(after.nodes.map(node => node.heuristicTokens)).toEqual(before.nodes.map(node => node.heuristicTokens))
     const breakdown = ctx.sessionProjections.snapshot(session).values.contextBreakdown
-    expect(breakdown?.messageTokens).toBe(after.nodes.reduce((total, node) => total + node.heuristicTokens, 0))
+    expect(breakdown?.messageTokens).toBe(after.surfaceTokens)
     const restored = Session.create(SessionId('offloaded-restored'), session.snapshotEvents(), undefined, undefined, [imageOffloadProjection])
     expect(meter.measure(restored).surfaceTokens).toBe(after.surfaceTokens)
   })
@@ -239,8 +270,8 @@ describe('request projection pricing', () => {
     const { meter, session } = await harness(() => broken)
     session.append('user/message', imageMessage('photo'), { surfaceOp: 'append' })
     session.append('request/header', { header: header('vision'), reason: 'initial' })
-    expect(() => meter.measure(session))
-      .toThrow('route image pricing answered 0 prices for 1 occurrences')
+    expect(() => meter.refresh(session))
+      .toThrow('route image pricing answered a mismatched occurrence count for 1 occurrences')
   })
 
   it('offloads one of two equal attachments without rewriting the prior usage anchor', async () => {
@@ -256,6 +287,8 @@ describe('request projection pricing', () => {
         source: { kind: 'user' },
         content: [{ type: 'image', attachment: ref }, { type: 'image', attachment: ref }],
       }), { surfaceOp: 'append' })
+      session.append('request/header', { header: header('vision'), reason: 'initial' })
+      meter.refresh(session)
       appendSuccessfulCall(session, header('vision'), { inputTokens: 5000, outputTokens: 10 })
       const before = meter.measure(session)
       session.append('image/offload', { targets: [{ seq: source.seq, imageIndexes: [0] }] })
@@ -286,7 +319,7 @@ describe('request projection pricing', () => {
     })
     session.append('tool/result', { turn: 1, step: 1, message: result }, { surfaceOp: 'append' })
     session.append('request/header', { header: header('vision'), reason: 'initial' })
-    const measurement = meter.measure(session)
+    const measurement = meter.refresh(session)
     const imageFree = estimateMessage(createToolResultMessage({
       callId: ToolCallId('call-1'),
       content: [{ type: 'text', text: 'screenshot below' }],

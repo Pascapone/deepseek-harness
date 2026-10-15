@@ -3,10 +3,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
+import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { createAssistantMessage, createUserMessage, isAgentLoopRequest } from '@deepseek-ai/dsh-llm'
-import type { GenerateOptions, ToolSchema } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, LlmReplayRequestPricing, PreparedAdapterCall, ToolSchema } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId, SessionLogOffset, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
 import * as values from '@deepseek-ai/dsh-util-values'
 import { ReactLoopAgent } from '../src/agent.ts'
@@ -43,6 +44,81 @@ function expectFrozen(value: unknown): void {
 }
 
 describe('loop-owned request freezing', () => {
+  it.each([undefined, 'in-history'] as const)('captures the prepared tool update policy, including known unsupported: %s', async (mode) => {
+    const adapter = new MockAdapter([textResponse('ok')])
+    if (mode !== undefined) adapter.toolUpdate = mode
+    const { ctx } = await harness(adapter)
+    await ctx.plugin(TokenMeter)
+    const refresh = vi.spyOn(ctx.tokenMeter, 'refresh')
+    const agent = await ctx.agentLoop.create(SessionId(`tool-policy-${mode}`), { provider: 'mock', model: 'mock' })
+    await send(agent, 'one')
+    expect(refresh).toHaveBeenCalledTimes(1)
+    const snapshot = refresh.mock.calls[0]?.[2]
+    expect(Object.hasOwn(snapshot ?? {}, 'toolUpdate')).toBe(true)
+    expect(snapshot?.toolUpdate).toBe(mode)
+    expect(agent.session.snapshotEvents().some(event => event.type === 'assistant/message')).toBe(true)
+  })
+
+  it('does not log a configured cap as a known reserve when the prepared adapter declares it unknown', async () => {
+    class UnknownReserveAdapter extends MockAdapter {
+      override async prepareCall(provider: string, model: string): Promise<PreparedAdapterCall> {
+        return { ...await super.prepareCall(provider, model), outputReserve: () => undefined }
+      }
+    }
+    const { ctx } = await harness(new UnknownReserveAdapter([textResponse('ok')]))
+    const agent = await ctx.agentLoop.create(SessionId('unknown-reserve'), { provider: 'mock', model: 'mock', maxTokens: 120 })
+    await send(agent, 'one')
+    expect(agent.session.requestHeader()?.config.maxTokens).toBe(120)
+    expect(agent.session.requestContext()?.outputReserve).toBeUndefined()
+  })
+
+  it('records the dispatched prefix, frozen scope, own hint, and reserve without per-request price vectors', async () => {
+    class PricedAdapter extends MockAdapter {
+      projection = 'v1'
+      override replayRequestPricing(): LlmReplayRequestPricing {
+        return {
+          scope: { version: 1, adapter: 'fake', projection: this.projection, provider: 'native', model: 'm' },
+          priceMessages: messages => messages.flatMap(message => message.role === 'assistant'
+            ? [{ messageId: message.id, replay: 'native', basis: 'usage-output' }] : []),
+        }
+      }
+    }
+    const adapter = new PricedAdapter([textResponse('first'), textResponse('second'), textResponse('third')], undefined, 900)
+    const { ctx } = await harness(adapter)
+    const agent = await ctx.agentLoop.create(SessionId('dispatch-cut'), { provider: 'mock', model: 'mock' })
+    let mutationSeq: number | undefined
+    ctx.on('llm/stream', (request, next) => {
+      if (mutationSeq === undefined) {
+        mutationSeq = agent.session.append('user/message', createUserMessage({
+          source: { kind: 'user' }, content: [{ type: 'text', text: 'arrived during stream' }],
+        }), { surfaceOp: 'append' }).seq
+        expect(request.messages.some(message => message.content.some(block => block.type === 'text' && block.text === 'arrived during stream'))).toBe(false)
+      }
+      return next()
+    })
+    await send(agent, 'one')
+    await send(agent, 'two')
+    const events = agent.session.snapshotEvents()
+    const replies = events.filter(event => event.type === 'assistant/message')
+    expect(replies).toHaveLength(2)
+    const first = replies[0]!
+    expect(first.data.request).toMatchObject({ version: 1, logOffset: mutationSeq })
+    expect(events[first.data.request!.headerSeq]?.type).toBe('request/header')
+    expect(events[first.data.request!.contextSeq]).toMatchObject({ type: 'request/context', data: { outputReserve: 900 } })
+    expect(first.data.replayPrice).toEqual({ contextSeq: first.data.request!.contextSeq,
+      price: { messageId: first.data.message.id, replay: 'native', basis: 'usage-output' } })
+    expect(events.filter(event => event.type === 'request/context')).toHaveLength(1)
+    expect(events.filter(event => event.type === 'request/context').every(event => event.data.replayPrices === undefined)).toBe(true)
+    adapter.projection = 'v2'
+    await send(agent, 'three')
+    const repriced = agent.session.snapshotEvents().filter(event => event.type === 'request/context').at(-1)!
+    expect(repriced.data.replayPricing?.projection).toBe('v2')
+    expect(repriced.data.replayPrices).toHaveLength(2)
+    expect(repriced.data.replayPrices?.map(price => price.messageId)).toEqual(replies.map(event => event.data.message.id))
+    const restored = Session.create(SessionId('dispatch-cut-cold'), agent.session.snapshotEvents())
+    expect(restored.deriveMessages()).toEqual(agent.session.deriveMessages())
+  })
+
   it('adopts restored identities, freezes nested messages at dispatch, and leaves event wrappers mutable', async () => {
     const { ctx, loopCtx } = await harness(new MockAdapter([textResponse('one'), textResponse('two'), textResponse('three'), textResponse('four')]))
     const id = SessionId('restored-freeze')

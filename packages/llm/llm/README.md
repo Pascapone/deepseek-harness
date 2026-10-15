@@ -62,6 +62,8 @@ After a successful mount, `ctx.llm.listProviders()` reports the registered route
 
 ### What you can do
 
+Adapters may expose synchronous `replayRequestPricing(provider, model)` for explicitly recording native replay hints. `prepareCall()` captures the same pricing and historical-route ownership as dispatch; detached projections read recorded facts rather than resolving live adapters. `usage-output` references an assistant's existing `outputTokens` as a usage-informed hint, not an exact future replay price. `reasoningTokens` is an optional subset of output, including meaningful zero, and is never added again. Prepared calls also retain optional `imagePricing` for recording representation receipts and resolve `outputReserve` from effective call controls before input-dependent provider clamping; a provider may conservatively reserve its native ceiling when a caller cap is not guaranteed.
+
 - **Stream one model call** — `ctx.llm.stream(options)` yields raw chunks (token-level deltas) for any registered provider and model; consumers assemble them with `BlockAssembler`.
 - **Register provider adapters** — an adapter owns one or more provider routes, and its registration captures that route's retry policy; registering the same route twice fails with `DUPLICATE_ADAPTER`.
 - **Expose and activate providers through configuration** — adapters declare configurable-provider routes plus a settings namespace, so configuration surfaces can activate dormant providers and edit connection facts without a restart. `LlmConfigurableProvider.error` reports a configuration diagnostic for repair; unaffected models can remain serviceable.

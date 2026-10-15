@@ -27,6 +27,7 @@ With `dsh-typert-protocol`, business packages can expose Host methods to Remote 
 
 This package is for business-package and assembly maintainers who expose Host capabilities to Remote clients. It is a declarations library: mark methods, bind services, and let the generated pipeline and the Gateway do the rest.
 
+<a id="exposing-a-host-method"></a>
 ### Exposing a Host method
 
 A business package marks a public instance method with `@Remote` (or `@RemoteScope(key)` when the receiver comes from a scoped Context), and the owning service either extends `TypertRemoteService` or declares a `typertRemote` binding through `bindTypertRemote()`:
@@ -47,6 +48,8 @@ Generation turns the method into a wire endpoint under the service's namespace; 
 A unary method can return `Uint8Array` directly or within nested objects, arrays, tuples, optional fields, unions, and recursive types. Generation supplies optional result codec `encode()` and `decode()` functions: encoding visits only subtrees whose types can contain bytes, while decoding validates reconstructed values; Client declarations use `Uint8Array<ArrayBuffer>` at every byte position while retaining other field types. Pure JSON results pass through without Host byte detection or Client parsing. Parameters, events, and stream items remain JSON-only; runtime object cycles are unsupported.
 
 A stream method (`@Remote({ mode: 'stream' })`) returns `Iterable`, `AsyncIterable`, or `RemoteStream<Out, In>`. `In` declares the items the Client may send back on the same logical stream; the method reads them through `this.ctx.invocation.uplink<In>()`, and the descriptor carries their codec. `RemoteInvocation` also names the receiving `service`, the calling `peer` (a `PeerScope` the connection layer admitted), and the carrier `signal`; `ctx.invocation` is `undefined` on a Context no Remote call derived: the first `bindTypertRemote()` binding in a tree, which every `TypertRemoteService` constructor makes, registers that accessor on the root. A generated Client stream method returns `RemoteStreamHandle<Out, In>`: the handle with `send`, `end`, and `dispose` beside the downlink iteration. Uplink items are validated one by one at the Host because they arrive from the browser; downlink items are values the Host method produced and pass through.
+
+Authored `value?: T` parameters carry `optional: true` in invocation descriptors. Client callers may omit trailing optional business arguments; `value: T | undefined` still requires a positional argument.
 
 ### Associating Host objects and Contexts with wire identities
 

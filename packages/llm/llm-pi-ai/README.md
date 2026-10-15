@@ -106,6 +106,10 @@ For self-hosted Chat Completions endpoints, `thinkingTokenBudgetField` selects t
 
 ### Change configuration at runtime
 
+Output reservation follows the pinned pi-ai protocol rules: explicit caps remain effective on capped protocols, budget-based Anthropic thinking includes its added budget, and unknown protocols or protocols that do not honor a caller cap reserve the native ceiling conservatively. The reserve precedes pi-ai's input-dependent context clamp and is not presented as a wire-exact limit. Updating the pinned pi-ai dependency requires reviewing these rules and advancing the replay projection revision when its semantics change.
+
+Replay pricing reuses durable assistant conversion and pi-ai's message transform. Native eligibility requires the actual provider, API, and requested model to match; Harness aliases alone do not establish compatibility. Projection identity includes a versioned hash of native routing and compatibility settings, without exposing endpoints or credentials. A native hint references stored output usage rather than counting encrypted bytes or claiming exact replay tokens; missing usage remains unknown. Malformed or unsupported replay metadata follows the same provider-neutral fallback as dispatch. Optional pi-ai reasoning usage, including zero, is preserved as a subset of output.
+
 Each operation captures the current `providers` Config reference. New or changed provider profiles are validated before form persistence; unchanged catalog failures remain editable. Route-set or retry-policy changes update registration atomically, preserving previous routes if another adapter owns a requested route.
 
 ### Discover models from endpoints

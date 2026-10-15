@@ -7,13 +7,14 @@
  * responses via `llm-replay` (`cordis.snapshot.yml`); `DSH_SNAPSHOT=record`
  * re-records against the live API; `DSH_SNAPSHOT=refresh` replays committed
  * fixtures and rewrites expected outputs.
+ * `DSH_SNAPSHOT_DSH_BIN` selects an existing same-version built CLI for carrier checks.
  */
 
 import { existsSync } from 'node:fs'
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, delimiter, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   assertPersistedSessionVersion,
@@ -352,7 +353,7 @@ async function hydrateReplayFixtures(scenario: CorpusScenario, cwd: string): Pro
   await mkdir(root, { recursive: true })
   return Promise.all((await fixtureFiles(scenario)).map(async (source) => {
     const destination = join(root, basename(source))
-    await writeFile(destination, (await readFile(source, 'utf8')).replaceAll('{{cwd}}', cwd))
+    await writeFile(destination, (await readFile(source, 'utf8')).replaceAll('{{cwd}}', JSON.stringify(cwd).slice(1, -1)))
     return destination
   }))
 }
@@ -561,6 +562,21 @@ async function runScenario(scenario: CorpusScenario): Promise<{
   const assertions = SDK_ASSERTIONS[scenario.name] ?? {}
   const patches = [...authoredPatches(scenario, !recording), ...assertions.patches ?? []]
     .map((patch, index) => materializeProfilePatch(patch, cwd, 'sdk', patchRoot, index))
+  const dshBin = process.env.DSH_SNAPSHOT_DSH_BIN
+  const cli = dshBin === undefined ? new URL('../../apps/cli/lib/bin.js', import.meta.url) : pathToFileURL(dshBin)
+  if (existsSync(cli)) {
+    const builtReplayAdapter = dshBin === undefined
+      ? new URL('../../packages/test-support/llm-replay/lib/index.js', import.meta.url)
+      : new URL('../../dsh-llm-replay/lib/index.js', cli)
+    for (const patch of patches) {
+      const source = await readFile(patch, 'utf8')
+      const resolved = source.replaceAll("'@deepseek-ai/dsh-llm-replay'", JSON.stringify(builtReplayAdapter.href))
+      if (resolved !== source) {
+        if (!existsSync(builtReplayAdapter)) throw new Error('SDK replay requires the built llm-replay test adapter')
+        await writeFile(patch, resolved)
+      }
+    }
+  }
   let childSessionsRoot: string | undefined
   let childEnvironment: Record<string, string> = {}
   if (assertions.dshSdkChild !== undefined) {
@@ -601,14 +617,17 @@ async function runScenario(scenario: CorpusScenario): Promise<{
     ...scenario.manifest.environment,
     ...assertions.environment,
     ...childEnvironment,
+    ...recording ? {} : { DEEPSEEK_API_KEY: '' },
   }
 
   const harness = new DeepSeekHarness({
     profile: 'sdk',
+    ...dshBin === undefined ? {} : { dshBin },
     patches,
     dshHome,
     processCwd: cwd,
     env,
+    initializeTimeoutMs: 60_000,
     requestTimeoutMs: 110_000,
     cwd,
     provider: route.provider,
@@ -650,7 +669,7 @@ async function runScenario(scenario: CorpusScenario): Promise<{
         results.push(result)
         if (scenario.manifest.environment?.DSH_SNAPSHOT_FEEDBACK === '1') {
           const feedback = result.events.filter(event => event.type.startsWith('feedback/'))
-          expect(feedback.map(event => event.type)).toEqual([
+          expect(feedback.map(event => event.type), JSON.stringify({ finalResponse: result.finalResponse, events: result.events })).toEqual([
             'feedback/record', 'feedback/record', 'feedback/message-put', 'feedback/message-put', 'feedback/message-delete',
           ])
         }

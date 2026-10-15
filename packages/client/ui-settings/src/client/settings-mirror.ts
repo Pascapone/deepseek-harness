@@ -1,6 +1,6 @@
 /**
  * Client mirror of the Host settings document: the one `settings.describe`
- * reader in the browser. Every settings consumer derives from this store —
+ * reader for a configuration scope. Settings consumers derive from this store —
  * shared entry forms through `ConfigForms.get`, cross-namespace
  * surfaces through the provider's shared describe face — so startup cost and
  * freshness are properties of this class, not of how many features own a
@@ -26,8 +26,8 @@ export interface SettingsDescribeView {
 /** Mirror state every derived settings surface renders from. */
 export interface SettingsMirrorSnapshot {
   /**
-   * `unavailable` is the terminal non-loopback state; `ready` persists across
-   * later failed refreshes (the held view keeps serving); `idle` means no
+   * `unavailable` means persistence is disabled or a scoped read was denied;
+   * `ready` persists across later failed refreshes; `idle` means no
    * answer is held and no read is running, so `ensure` will start one.
    */
   status: 'idle' | 'loading' | 'ready' | 'unavailable'
@@ -80,10 +80,12 @@ export class SettingsDescribeMirror implements SettingsDescribeFace {
    * @param ctx - the providing plugin's context, whose `remote.settings`
    * namespace answers the describe read.
    * @param persistence - client-selected Host persistence; non-loopback pages may remain process-local.
+   * @param scopedNamespace - explicit retention-only Host read for authenticated remote browsers.
    */
   constructor(
     private readonly ctx: ClientContext,
     private readonly persistence: 'host' | 'memory' = 'host',
+    private readonly scopedNamespace?: 'compaction-retention',
   ) {
     this.store = createSnapshotStore<SettingsMirrorSnapshot>({
       status: persistence === 'host' ? 'idle' : 'unavailable',
@@ -145,6 +147,7 @@ export class SettingsDescribeMirror implements SettingsDescribeFace {
    */
   acceptView(view: SettingsNamespaceView): void {
     const before = this.store.getSnapshot()
+    if (this.scopedNamespace !== undefined && view.ns !== this.scopedNamespace) return
     this.generation += 1
     if (this.inFlight !== undefined) this.rerun = true
     if (before.view === undefined) return
@@ -180,7 +183,9 @@ export class SettingsDescribeMirror implements SettingsDescribeFace {
         const generation = ++this.generation
         let outcome: { view: SettingsDescribeView } | { failure: string }
         try {
-          const response = await this.ctx.remote.settings.describe()
+          const response = this.scopedNamespace === undefined
+            ? await this.ctx.remote.settings.describe()
+            : await this.ctx.remote.settings.describe(this.scopedNamespace)
           outcome = response.ok
             ? { view: response.value }
             : { failure: response.error.message }
@@ -190,14 +195,18 @@ export class SettingsDescribeMirror implements SettingsDescribeFace {
         // A write answer invalidates a document read before that write committed.
         if (generation !== this.generation) continue
         if ('view' in outcome) {
-          this.store.set({ status: 'ready', view: outcome.view, error: null })
+          const view = this.scopedNamespace === undefined ? outcome.view : {
+            ...outcome.view, hasDocument: false,
+            namespaces: outcome.view.namespaces.filter(row => row.ns === this.scopedNamespace),
+          }
+          this.store.set({ status: 'ready', view, error: null })
         } else {
           const held = this.store.getSnapshot()
           // No answer yet: fall back to idle so `ensure` retries; with one, the
           // held view keeps serving and only the error field reports the miss.
           this.store.set({
-            status: held.view === undefined ? 'idle' : 'ready',
-            view: held.view,
+            status: held.view === undefined ? this.scopedNamespace === undefined ? 'idle' : 'unavailable' : 'ready',
+            view: this.scopedNamespace !== undefined && held.view !== undefined ? { ...held.view, writable: false } : held.view,
             error: outcome.failure,
           })
         }

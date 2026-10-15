@@ -5,8 +5,11 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { contentHasImage, BlockAssembler, LlmError } from '@deepseek-ai/dsh-llm'
-import { deepFreeze } from '@deepseek-ai/dsh-util-values'
+import { contentHasImage, BlockAssembler, createUserMessage, LlmError, projectToolUpdates } from '@deepseek-ai/dsh-llm'
+import { canonicalHeader } from '@deepseek-ai/dsh-session'
+import { CompactionBudgetError } from './config.ts'
+import { deepEqualJson, deepFreeze } from '@deepseek-ai/dsh-util-values'
+import { estimateToolsTokens } from '@deepseek-ai/dsh-token-meter/estimate'
 import type {
   ContentBlock, FinishReason, GenerateOptions, Message, RequestMessage, TokenUsage, ToolSchema,
 } from '@deepseek-ai/dsh-llm'
@@ -124,6 +127,30 @@ export async function summarizeWithLlm(
   agent: Agent,
   signal?: AbortSignal,
 ): Promise<SummaryResult> {
+  const prepared = await prepareSummarization(ctx, config, input, agent, signal)
+  return prepared.summarize(input)
+}
+
+/** Capture one default summary call and price candidate prefixes before paid dispatch.
+ * @param ctx - LLM and common token-meter services.
+ * @param config - operation-snapshotted summary target and output cap.
+ * @param input - original prefix supplying the fixed tool interface.
+ * @param agent - conversation owner and durable replay prices.
+ * @param signal - cancellation for preparation and dispatch.
+ * @returns a bounded prefix price and a single-use prepared summary executor.
+ */
+export async function prepareSummarization(
+  ctx: Context,
+  config: SummaryConfig,
+  input: SummarizationInput,
+  agent: Agent,
+  signal?: AbortSignal,
+): Promise<{
+  contextWindow: number
+  outputReserve: number
+  price: (prefix: SummarizationInput) => number
+  summarize: (prefix: SummarizationInput) => Promise<SummaryResult>
+}> {
   const latest = agent.session.requestHeader()?.config
   const configured = config.summarizationProvider.length === 0
     ? undefined
@@ -141,42 +168,99 @@ export async function summarizeWithLlm(
     )
   }
 
-  const assembler = new BlockAssembler()
-  const messages: RequestMessage[] = [
-    ...input.messages,
-    deepFreeze({
-      role: 'user',
-      content: [{ type: 'text', text: COMPACTION_INSTRUCTION }],
-    }),
-  ]
-  const options: GenerateOptions = {
+  const sameTarget = latest?.provider === target.provider && latest.model === target.model
+  const prepared = await ctx.llm.prepareCall({
     provider: target.provider,
     model: target.model,
-    messages,
-    toolHistory: agent.session.toolHistory(),
-    ...input.tools === undefined ? {} : { tools: [...input.tools] },
     maxTokens: config.maxTokens,
-    sessionId: agent.session.id,
-    purpose: 'compaction',
-    ...signal === undefined ? {} : { signal },
+    ...sameTarget && latest.reasoningEffort !== undefined ? { reasoningEffort: latest.reasoningEffort } : {},
+  }, signal)
+  const contextWindow = prepared.context?.contextWindow
+  const outputReserve = prepared.outputReserve
+  if (contextWindow === undefined || outputReserve === undefined) throw new CompactionBudgetError(
+    `compaction summary: ${target.provider}/${target.model} has no known context capacity or prepared response reserve`,
+  )
+  const header = canonicalHeader({ config: prepared.config, ...input.tools === undefined ? {} : { tools: [...input.tools] } })
+  const meter = ctx.tokenMeter
+  const current = meter.measure(agent.session)
+  const projection = meter.preview(agent.session, header, {
+    ...prepared.replayPricing === undefined ? {} : { replayRequestPricing: prepared.replayPricing },
+    ...prepared.imagePricing === undefined ? {} : { imageRequestPricing: prepared.imagePricing },
+    outputReserve,
+    toolUpdate: prepared.toolUpdate,
+    fileRequestText: ref => ctx.llm.fileRequestText(ref),
+  }).measurement
+  const prices = new Map<string, { tokens: number; incomplete: boolean; seq: number }>()
+  for (const node of projection.nodes) {
+    // Current surface ids index the Session log; only its retained events are read.
+    // oxlint-disable-next-line typescript/no-deprecated, typescript/no-non-null-assertion
+    const message = agent.session.deriveEventMessage(agent.session.eventAt(node.seq)!)
+    if (message !== null) prices.set(message.id, { tokens: node.tokens, incomplete: node.quality === 'incomplete', seq: node.seq })
   }
-  for await (const chunk of ctx.llm.stream(options)) assembler.push(chunk)
-  const error = finishError(assembler.finish)
-  if (error !== undefined) throw error
-
-  const rawOutput = assembler.blocks()
-  const summary = summaryText(rawOutput)
-  if (!summary.some(block => block.text.trim().length > 0)) {
-    throw new Error('summarization produced no text summary content')
+  const instruction = deepFreeze({ role: 'user' as const, content: [{ type: 'text' as const, text: COMPACTION_INSTRUCTION }] })
+  const instructionTokens = meter.estimateMessage(createUserMessage({ source: { kind: 'user' }, content: instruction.content }))
+  // A subset cannot establish which part of an observed global residual disappeared.
+  const previousScope = agent.session.requestContext()?.replayPricing
+  const comparablePricing = prepared.replayPricing === undefined ? sameTarget && previousScope === undefined
+    : deepEqualJson(previousScope, prepared.replayPricing.scope)
+  const residual = comparablePricing && !sameTarget
+    ? Math.max(projection.unattributedTokens, current.unattributedTokens) : projection.unattributedTokens
+  const toolHistory = agent.session.toolHistory()
+  const price = (prefix: SummarizationInput): number => {
+    const projected = projectToolUpdates(prefix.messages, prefix.tools, prepared.toolUpdate, toolHistory)
+    let tokens = estimateToolsTokens({
+      config: prepared.config, ...projected.tools === undefined ? {} : { tools: [...projected.tools] },
+    }) + instructionTokens + residual
+    const included = new Set<number>()
+    for (const message of prefix.messages) {
+      const known = prices.get(message.id)
+      if (known !== undefined) included.add(known.seq)
+    }
+    const grouped = new Set<number>()
+    for (const group of projection.groups) {
+      const count = group.seqs.filter(seq => included.has(seq)).length
+      if (count === 0) continue
+      if (count !== group.seqs.length || group.quality === 'incomplete') throw new CompactionBudgetError('compaction summary input would split a jointly measured cost group')
+      tokens += group.tokens
+      for (const seq of group.seqs) grouped.add(seq)
+    }
+    for (const message of projected.messages) {
+      const known = 'id' in message ? prices.get(message.id) : undefined
+      if (known !== undefined && grouped.has(known.seq)) continue
+      const opaque = message.role === 'assistant' && message.source.replayState !== undefined
+      if (known?.incomplete || (known === undefined && (opaque || message.content.some(block => block.type === 'image' || block.type === 'file')))) {
+        throw new CompactionBudgetError('compaction summary input has unpriced native or media content; refresh pricing or offload the indivisible unit before summarizing')
+      }
+      tokens += known?.tokens ?? meter.estimateMessage(message.role === 'user' ? createUserMessage({ source: { kind: 'user' }, content: message.content }) : message)
+    }
+    return tokens
   }
   return {
-    summary,
-    rawOutput,
-    llmStreamCall: true,
-    provider: options.provider,
-    model: options.model,
-    maxTokens: config.maxTokens,
-    ...(assembler.usage === undefined ? {} : { usage: assembler.usage }),
+    price, contextWindow, outputReserve,
+    async summarize(prefix: SummarizationInput): Promise<SummaryResult> {
+      const inputTokens = price(prefix)
+      if (inputTokens + outputReserve > contextWindow) throw new CompactionBudgetError(
+        `compaction summary input ${inputTokens} plus prepared output reserve ${outputReserve} exceeds ${target.provider}/${target.model} context ${contextWindow}`,
+      )
+      const messages: RequestMessage[] = [...prefix.messages, instruction]
+      const options: GenerateOptions = {
+        ...prepared.config, messages,
+        toolHistory,
+        ...prefix.tools === undefined ? {} : { tools: [...prefix.tools] },
+        sessionId: agent.session.id, purpose: 'compaction',
+        ...signal === undefined ? {} : { signal },
+      }
+      const assembler = new BlockAssembler()
+      for await (const chunk of prepared.stream(options)) assembler.push(chunk)
+      const error = finishError(assembler.finish)
+      if (error !== undefined) throw error
+      const rawOutput = assembler.blocks()
+      const summary = summaryText(rawOutput)
+      if (!summary.some(block => block.text.trim().length > 0)) throw new Error('summarization produced no text summary content')
+      return { summary, rawOutput, llmStreamCall: true, provider: options.provider, model: options.model,
+        maxTokens: prepared.config.maxTokens ?? config.maxTokens,
+        ...assembler.usage === undefined ? {} : { usage: assembler.usage } }
+    },
   }
 }
 

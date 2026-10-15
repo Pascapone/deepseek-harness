@@ -25,7 +25,7 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-功能插件用本包存储与编辑自己的偏好设置，而无需重新实现传输层或 schema 处理。每个组合挂载一次即可；它注入 `remote` 服务及其 `settings` 命名空间，并持有浏览器中唯一的 `settings.describe` 读取方。
+功能插件用本包存储与编辑自己的偏好设置，而无需重新实现传输层或 schema 处理。每个组合挂载一次即可；它注入 `remote` 服务及其 `settings` 命名空间，并持有共享配置镜像。
 
 ### 配置表单
 
@@ -34,6 +34,8 @@ kind: "package-reference"
 功能适配器使用 `ctx.configForms.get(entryId)` 获取该 Host 条目所有编辑器共享的已接受值和写入队列。快照包含解析后的 `value`、继承 `base`、原始 `user`、修订号、可写性和持久化模式。`set` 与 `unset` 提交单个操作，`mutate` 提交一个原子操作列表。暂存编辑器传入编辑前读取的修订号；冲突时保留草稿。清除操作移除覆盖并恢复继承。
 
 ### 跟随被服务的命名空间
+
+`ctx.configForms.get('compaction-retention')` 是普通持久化策略针对远程浏览器的唯一例外。它只请求 `settings.describe('compaction-retention')`，保留宿主修订号和已接受值，并提交普通原子设置操作。其他命名空间仍使用内存模式，不读取或写入宿主。此独立镜像不提供配置文件能力，忽略其他命名空间的应答，访问被拒绝或读取不可用时保持只读，直到重新连接后刷新。回环客户端复用共享表单，不另建镜像。
 
 编辑另一个插件所拥有命名空间的页面通过 `ctx.configForms.whileServed(namespaces, register)` 注册：只要所列命名空间中的任一个进入共享镜像，`register` 就运行一次，收到 Host 当前服务的命名空间集合，并返回该注册的 disposer；当它们全都不再被服务，或 `whileServed` 返回的 disposer 被调用时，这个 disposer 就运行。调用方持有返回的 disposer 并把它包进 `ctx.effect`；与 `get` 不同，服务不会在调用方的 context 上注册任何东西。因此从未组合过所有者的部署看不到该页面的任何痕迹，Host 停止服务的命名空间会撤下它。插件页上的四个官方页面各自通过一个伴生包走这条路径。
 
@@ -55,7 +57,7 @@ kind: "package-reference"
 <details>
 <summary>实现细节——点击展开</summary>
 
-本包实现一条归属规则：浏览器保留设置文档的一面共享镜像，每个派生表面都读这同一真源，因此任一时刻看到的都是同一份文档 revision。
+本包保留设置文档的一面共享镜像；远程浏览器使用只含保留设置的独立作用域，不启用共享文档镜像。
 
 ### Describe 镜像
 
@@ -103,7 +105,7 @@ kind: "package-reference"
 
 这些限制说明设置传输层够不到的地方；它们是当前包约束。
 
-- **非 loopback 页面没有持久化设置**：本 Client 在那里禁用 Host 持久化，因此 表单以 `unavailable` 起步且从不跨线路；尽管 Connection 认证覆盖 API，表单写入仍在那里无效。共享的代码工作工具偏好单独提供浏览器本地变更。
+- **非 loopback 页面只持久化保留设置**：普通表单保持 `unavailable`，尽管 Connection 认证覆盖 API，普通表单写入仍在那里无效。独立的保留设置表单使用宿主持久化；共享的代码工作工具偏好仍提供浏览器本地变更。
 
 <a id="dev-note"></a>
 ### 开发备注

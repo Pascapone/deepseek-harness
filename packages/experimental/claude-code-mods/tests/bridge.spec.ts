@@ -841,7 +841,7 @@ describe('turn.complete reasons and sessions the bridge did not follow from the 
 })
 
 describe('$.session.usage with the token meter', () => {
-  it('reports the provider-measured prompt size against the route\'s context window', async () => {
+  it('reports the shared next-input forecast against the matched route context window', async () => {
     const mod = writeMod('usage-mod', `
       export function register(on) {
         on('turn.complete', async ($, e, next) => {
@@ -860,6 +860,7 @@ describe('$.session.usage with the token meter', () => {
     const context = JSON.parse(line.slice('usage-mod: usage '.length)) as { tokens: number; window: number; percent: number }
     expect(context.window).toBe(1000)
     expect(context.tokens).toBeGreaterThan(0)
+    expect(context.tokens).toBe(h.ctx.tokenMeter.measure(agent.session).inputTokens)
     expect(context.percent).toBe(Math.round((context.tokens / 1000) * 100))
   })
 })

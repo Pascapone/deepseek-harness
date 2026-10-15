@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Use this package to give the dsh web client a Settings panel, connection-recovery control, feature-contributed navigation, and sequential first-run onboarding. Users can open it from the sidebar, retry a failed connection immediately, and access a local configuration file when the Host makes one available on a loopback browser. Feature packages supply their own settings rows, sections, and onboarding steps; this package supplies their shared presentation and the Coding Tools switch without adding onboarding copy.
+Use this package to give the dsh web client a Settings panel, connection-recovery control, feature-contributed navigation, and sequential first-run onboarding. Users can open it from the sidebar, retry a failed connection immediately, and access a local configuration file when the Host makes one available on a loopback browser. Feature packages supply additional settings rows, sections, and onboarding steps; this package supplies their shared presentation, the Coding Tools switch and the original-history retention companion without adding onboarding copy.
 
 ## Table of Contents
 
@@ -44,6 +44,12 @@ The current release version appears at the bottom of General Settings in Web and
 The Coding Tools switch controls the shared `ui-settings.enabled` preference described by [ui-settings](../ui-settings/README.md#use-this-package). It is available in both Web and desktop, follows accepted changes immediately, and disables duplicate input while a write settles. A failed write displays localized retry guidance.
 
 The General section holds the built-in Coding Tools and Current version rows alongside rows registered into `settings.general.item` by feature packages. Each registrant owns its row copy and behavior. The Appearance row, for example, lives in ui-theme.
+
+### Context & Compaction
+
+Authenticated remote browsers use only the retention-scoped Host settings read and write. A denied or unavailable read leaves this section read-only; the card cannot enable other remote Host settings or save a browser-only substitute.
+
+When the Host serves `compaction-retention`, this section edits the youngest original-history target as fixed tokens or a percentage of the model context window minus answer reserve. Save writes one mode/value pair through the ordinary revision-fenced Settings mutation; switching modes cannot retain a fixed-token override. Use Agent configuration restores the engine's configured retention. Exact-model retention policies take precedence. Running compactions keep their starting snapshot; the next compaction reads the saved value. The target is not a whole-request limit, and indivisible tool groups can make the retained history larger. Connections without durable Host settings cannot save a browser-only substitute.
 
 ### Opening the configuration file
 

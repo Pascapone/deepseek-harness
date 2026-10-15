@@ -12,7 +12,7 @@
 
 | 事件 | 载荷 | 作用 |
 |---|---|---|
-| `compaction/start` | `{ turn }` | 获取日志记录的锁；数字标识尚未结束的自动轮次，`null` 标识独立手动尝试 |
+| `compaction/start` | `{ compactionId, sourceCommandId?, turn, pricing? }` | 获取日志记录的锁；数字标识尚未结束的自动轮次，`null` 标识独立维护；可选的 `RequestContext` 定价捕获空闲 preview，不接纳模型请求 |
 | `compaction/summary` | `{ summary, rawOutput?, llmStreamCall?, shadowedRange, shadowedSeqs, shadowedTokenCount, provider, model, maxTokens?, usage? }` | 安全摘要投影、可选的完整提供方输出与 usage、生成结果时恰好通过此上下文的 `ctx.llm.stream()` 发起一次调用所带的 `llmStreamCall: true` 标记（此时必须提供完整的 `rawOutput`）、被遮蔽的 surface 边界对（`start`/`end` seq——位置跨度，而非数值区间）、按 surface 顺序排列的被遮蔽 seq、估算 token 数，以及摘要调用的 envelope（`provider`、`model`，若有生成上限则还包括该上限）——写入日志后，该一次性请求可由日志 + 代码重建（见可重建性 Agent Note）；未带标记的 `rawOutput` 并不能判定调用路径 |
 | `compaction/end` | `{ turn, error? }` | 使用相同的数字或 `null` 归属值释放锁（`error` 记录失败尝试） |
 
@@ -101,6 +101,38 @@ type ManualCompactionErrorCode =
 压力压缩在 `agent/pre-step` waterfall（瀑布式事件）中运行，先于请求推导。一旦压力或规范化溢出满足条件，compaction-basic 会在选择范围前调用可选的 [`ctx.toolResultPruner`](../../packages/compaction/compaction-tool-result-pruner/README.zh.md)，再通过 `ctx.tokenMeter` 重新测量，并且可以在不生成摘要的情况下推进 surface。失败请求的恢复在失败的步骤关闭后通过 `agent/request-error` 运行；仅当 surface replacement generation 前进时才返回重试动作，即便后续摘要工作在剪枝后抛异常亦如此；取消仍然优先。区域边界保持工具调用/结果配对，但不保持整个轮次，因此一个过大轮次中较早关闭的步骤可以被压缩。`dsh-compaction-basic` 拥有阈值、保留尾部策略、溢出上限与失败处理。
 
 该 Service Definition 导出 `toolPairingBalancedBefore(session, seq)` 与 `toolPairingBalancedAfter(session, seq)`，用于检查 seq 之前与之后的工具调用/结果配对。两者都会验证当前 surface 成员关系，并拒绝缺失的 seq 与遗留结果；[包约定](../../packages/compaction/compaction/README.zh.md#tool-pairing-boundaries)定义其缓存行为。
+
+<a id="input-budgets-and-bounded-summaries"></a>
+## 输入预算与有界摘要
+
+`compaction-basic` 使用共享输入预测，而不是历史输入加回答输出。它保护完整工具调用/结果单元和联合校准成本组。未知的原生或媒体成本不能证明预算安全。付费摘要开始前，所选 span 必须能在检查点包裹开销之外继续缩小，固定输入加保留历史也必须允许在压力阈值以下释放可行余量。
+
+默认 LLM 摘要器准备一个确切路由，校验已知上下文容量和回答预留，并对完整摘要输入计价，包括指令、投影工具、原生回放、媒体和残余成本。过大的选区在现有操作的摘要调用额度内，沿安全单元边界分段处理；过大的不可拆分单元在调度前失败。后续分段包含前一检查点，所有选中的原始节点都必须压缩后操作才算完成。单独的既有检查点绝不再次摘要。辅助调用只在相同 provider/model 目标上继承对话推理强度。
+
+替换后，后端重新计量完整输入并检查本次操作的可行目标；检查点更小本身不代表成功。没有安全范围、覆盖不完整、有界调用额度耗尽及仍然关键的输入压力会产生 `CompactionBudgetError`。后续分段失败时，先前已提交的进展可能保留。阈值、压缩后目标、保留尾部目标、输出预留与余量仍各自独立；[后端约定](../../packages/compaction/compaction-basic/README.zh.md)拥有策略细节。
+
+## 持久化原始历史保留
+
+设置 → 上下文与压缩通过普通宿主配置路径保存明确的固定 Token、比例或继承模式。全局选择覆盖引擎默认值，但不覆盖模型专用保留策略。引擎为每次操作采样一份不可变策略，在持久化前校验已知模型预算，并将上次使用的策略与新保存的偏好区分展示。未知路由在解析时必须校验容量。经过认证的远程浏览器只持久化获准的保留命名空间，不启用其他宿主设置。
+
+```ts type-equiv
+/** Explicit mode prevents a previously saved fixed budget from overriding ratio mode. */
+type RetentionPreference =
+  | { mode: 'inherit'; value: 0 }
+  | { mode: 'tokens'; value: number }
+  | { mode: 'ratio'; value: number }
+```
+
+```ts type-equiv
+/** Exactly one validated retention form. */
+type ResolvedRetention =
+  | { readonly retainRatio: number; readonly retainTokens?: never }
+  | { readonly retainRatio?: never; readonly retainTokens: number }
+```
+
+`retainRatio` 作用于上下文容量减去预留输出，之后才扣除余量；`retainTokens` 是最近原始历史的绝对目标。切换模式会移除固定 Token 值的优先级。原生推理和工具动作属于该保留历史；系统输入、工具、摘要包裹及新输入仍额外占用总预算。安全边界可使保留量超过目标，但不能成为总量仍然关键的借口。[解析后策略类型](../../packages/compaction/compaction-basic/src/types.ts)保留胜出的 `retentionSource` 和具体目标；空闲手动操作遵守明确保留设置，而保留策略仅来自隐式默认值时可压缩所有有用历史。
+
+[`CompactionPolicyConfig`](../../packages/compaction/compaction-basic/src/types.ts)声明默认与模型专用策略共用的字段。[`RetentionValidator`](../../packages/compaction/compaction-basic/src/retention-settings.ts)根据活动引擎已知的路由容量，同步校验提议的只读偏好，不执行 I/O。在引擎 effect 中通过 `ctx.compactionRetention.registerValidator()` 注册；抛出错误会在持久化前拒绝整个 Settings 或 ConfigEditor 写入，销毁 effect 则移除该引擎的校验器。
 
 ## 工具结果剪枝产出
 
@@ -208,6 +240,27 @@ abstract compactRegion( start: SessionSeq, end: SessionSeq, agent: CompactionAge
 Types: [CommandId](commands.zh.md) · [SessionSeq](session.zh.md)
 
 Source: [`packages/compaction/compaction/src/index.ts`](../../packages/compaction/compaction/src/index.ts)
+
+<a id="ctxcompactionretention--compactionretentionsettings"></a>
+
+### `ctx.compactionRetention` — `CompactionRetentionSettings`
+
+Global settings owner shared by preset-scoped compaction engines.
+
+```ts cordis-catalog
+/** Enforce an active engine's known-model budget before any Settings or ConfigEditor write.
+ * @param validate Synchronous validation; throw an actionable error to reject the entire write.
+ * @returns Disposer, owned by the engine's plugin effect.
+ */
+registerValidator(validate: RetentionValidator): () => void
+
+/** Read a detached override for one operation; running operations retain their snapshot.
+ * @returns Only the active retention field, or neither when inheriting engine configuration.
+ */
+current(): Pick<CompactionPolicyConfig, 'retainTokens' | 'retainRatio'>
+```
+
+Source: [`packages/compaction/compaction-basic/src/retention-settings.ts`](../../packages/compaction/compaction-basic/src/retention-settings.ts)
 
 <a id="ctxtoolresultpruner--toolresultpruner"></a>
 

@@ -25,7 +25,7 @@ This package lets web-client features expose editable preferences backed by the 
 <a id="use-this-package"></a>
 ## Use this package
 
-Feature plugins use this package to store and edit their preferences without re-implementing transport or schema handling. Mount it once per composition; it injects the `remote` service with its `settings` namespace and owns the single `settings.describe` reader in the browser.
+Feature plugins use this package to store and edit their preferences without re-implementing transport or schema handling. Mount it once per composition; it injects the `remote` service with its `settings` namespace and owns the shared configuration mirror.
 
 ### Configuration forms
 
@@ -34,6 +34,8 @@ Feature plugins use this package to store and edit their preferences without re-
 Feature adapters use `ctx.configForms.get(entryId)` to obtain accepted values and a write queue shared by every editor of that Host entry. Snapshots contain resolved `value`, inherited `base`, raw `user`, revision, writability, and persistence mode. `set` and `unset` submit one operation; `mutate` submits one atomic operation list. Staged editors pass the revision read before editing; conflicts preserve their drafts. Unsetting removes the override and restores inheritance.
 
 ### Following served namespaces
+
+`ctx.configForms.get('compaction-retention')` is the sole remote-browser exception to the ordinary persistence policy. It requests only `settings.describe('compaction-retention')`, keeps the Host revision and accepted value, and submits ordinary atomic Settings mutations. Other namespaces retain memory mode and issue no Host reads or writes. The scoped mirror exposes no settings-document capability, ignores other namespace answers, and marks denied or unavailable reads read-only until reconnect refreshes them. Loopback clients reuse the shared form instead of creating another mirror.
 
 A page that edits a namespace another plugin owns registers through `ctx.configForms.whileServed(namespaces, register)`: `register` runs once any listed namespace is in the shared mirror, receives the set of namespaces the Host serves, and returns the registration's disposer, which runs when none of them is served any more or when the disposer `whileServed` returns runs. The caller owns that returned disposer and wraps it in `ctx.effect`; unlike `get`, the service registers nothing on the caller's context. A deployment that never composed the owner therefore shows no trace of the page, and a namespace the Host stops serving withdraws it. The four official pages on the Plugins page ride it, one companion package each.
 
@@ -55,7 +57,7 @@ The optional `settings.launcher` contribution receives sidebar geometry, whether
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The package realizes one ownership rule: the browser keeps one shared mirror of the settings document, and every derived surface reads that single source, so any moment in time shows the same document revision.
+The package keeps one shared mirror of the settings document; remote browsers use a separate retention-only scope without enabling the shared document mirror.
 
 ### The describe mirror
 
@@ -103,7 +105,7 @@ None; this package neither assembles nor sends a provider request.
 
 These limits define where the settings transport cannot reach; they are current package constraints.
 
-- **Non-loopback pages get no durable settings** — this Client keeps Host persistence disabled there, so a form starts `unavailable` and never crosses the wire; form writes are inert even though Connection authentication covers the API. The shared Coding Tools preference instead provides browser-local changes.
+- **Non-loopback pages persist only retention** — ordinary forms remain `unavailable` and their writes are inert even though Connection authentication covers the API. The scoped retention form uses Host persistence; the shared Coding Tools preference instead provides browser-local changes.
 
 <a id="dev-note"></a>
 ### Dev Note

@@ -36,6 +36,33 @@ function deferred<T>() {
 }
 
 describe('SettingsDescribeMirror', () => {
+  it('requests and mirrors only the durable remote retention namespace and marks denied refreshes read-only', async () => {
+    const describeCall = vi.fn()
+      .mockResolvedValueOnce(described([view('compaction-retention', 3), view('theme', 9)]))
+      .mockResolvedValueOnce(rejected('Authentication required'))
+    const mirror = new SettingsDescribeMirror(ctxWith(describeCall), 'host', 'compaction-retention')
+    await mirror.ensure()
+    expect(describeCall).toHaveBeenCalledExactlyOnceWith('compaction-retention')
+    expect(mirror.getSnapshot().view).toMatchObject({ writable: true, hasDocument: false, namespaces: [view('compaction-retention', 3)] })
+    mirror.acceptView(view('theme', 10))
+    expect(mirror.namespace('theme')).toBeUndefined()
+    await mirror.load()
+    expect(mirror.getSnapshot()).toMatchObject({ status: 'ready', error: 'Authentication required', view: { writable: false } })
+    expect(mirror.namespace('compaction-retention')?.revision).toBe(3)
+  })
+
+  it('keeps an initially denied remote retention read unavailable until an explicit reconnect refresh', async () => {
+    const describeCall = vi.fn().mockResolvedValueOnce(rejected('Authentication required'))
+      .mockResolvedValueOnce(described([view('compaction-retention', 1)]))
+    const mirror = new SettingsDescribeMirror(ctxWith(describeCall), 'host', 'compaction-retention')
+    await mirror.ensure()
+    await mirror.ensure()
+    expect(mirror.getSnapshot()).toMatchObject({ status: 'unavailable', view: undefined })
+    expect(describeCall).toHaveBeenCalledTimes(1)
+    await mirror.load()
+    expect(mirror.getSnapshot()).toMatchObject({ status: 'ready', error: null, view: { writable: true } })
+  })
+
   it('folds loads before the wire read into it, and mid-flight loads into one rerun', async () => {
     const gate = deferred<Answer<SettingsDescribeView>>()
     const describeCall = vi.fn()

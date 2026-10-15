@@ -269,8 +269,7 @@ describe('compactNow through the real loop', () => {
     compact.gate = gate.promise
 
     const running = compact.compactNow(agent, SIGNAL)
-    await Promise.resolve()
-    expect(log).toEqual(['compaction/start:null'])
+    await vi.waitFor(() => { expect(log).toEqual(['compaction/start:null']) })
     agent.followup(createUserMessage({
       content: [{ type: 'text', text: 'after compaction' }],
       source: { kind: 'user' },
@@ -456,7 +455,7 @@ describe('compactNow transaction and failure classification', () => {
     )
     const end = session.snapshotEvents().findLast(event => event.type === 'compaction/end')
     const correlated = { compactionId: result?.compactionId, sourceCommandId: commandId }
-    expect(start?.data).toEqual({ ...correlated, turn: null })
+    expect(start?.data).toMatchObject({ ...correlated, turn: null, pricing: { retention: { retainTokens: 0, source: 'config' } } })
     expect(summaryEvent?.data.sourceCommandId).toBe(commandId)
     expect(checkpoint?.data.source).toMatchObject(correlated)
     expect(end?.data).toEqual({ ...correlated, turn: null })
@@ -604,8 +603,7 @@ describe('compactNow transaction and failure classification', () => {
     const generation = session.surface.replaceGeneration
 
     const running = compact.compactNow(agent, SIGNAL)
-    await Promise.resolve()
-    expect(compact.calls).toHaveLength(1)
+    await vi.waitFor(() => { expect(compact.calls).toHaveLength(1) })
 
     gate.resolve()
     queueMicrotask(() => {
@@ -751,7 +749,7 @@ describe('compactNow transaction and failure classification', () => {
     expect(result).not.toBeNull()
     expect(session.snapshotEvents().some(event => event.type === 'turn/start')).toBe(false)
     expect(session.snapshotEvents().find(event => event.type === 'compaction/start')?.data)
-      .toEqual({ compactionId: result?.compactionId, turn: null })
+      .toMatchObject({ compactionId: result?.compactionId, turn: null })
   })
 
   it('classifies a durability failure after the standalone bracket committed', async () => {
@@ -918,7 +916,7 @@ describe('compactNow transaction and failure classification', () => {
     compact.gate = gate.promise
 
     const manual = compact.compactNow(agent, SIGNAL)
-    await Promise.resolve()
+    await vi.waitFor(() => { expect(compact.calls).toHaveLength(1) })
     const nodes = session.surface.nodes
     await expect(compact.compactRegion(
       nodes[0]!,

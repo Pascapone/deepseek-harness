@@ -9,6 +9,7 @@
  */
 
 import type { Message, ToolSchema } from '@deepseek-ai/dsh-llm'
+import { validateAccountingData, validateAccountingReferences } from './request-accounting.ts'
 import { SessionLogOffset, SessionSeq } from './types.ts'
 import { KNOWN_SESSION_EVENT_TYPES, MESSAGE_PROJECTION_EVENT_TYPES } from './known-event-types.ts'
 import type {
@@ -168,6 +169,7 @@ export function validateSessionEventData(
   subject: string,
 ): void {
   const data: unknown = event.data
+  validateAccountingData(event, subject)
   if (SURFACE_EVENT_TYPES.has(event.type) && isRecord(data)) {
     const message = event.type === 'user/message' ? data : data['message']
     if (isRecord(message)) {
@@ -520,6 +522,7 @@ function planSurfaceEvent(
   }
   const surfaceOp = validateSurfaceMetadata(event)
   assertDeveloperHeader(event, events, baseSeq)
+  validateAccountingReferences(event, events, baseSeq)
   const projection = projections.find(item => item.type === event.type)
   if (projection !== undefined) {
     return { kind: 'project', projection, messages: projection.project(event, {

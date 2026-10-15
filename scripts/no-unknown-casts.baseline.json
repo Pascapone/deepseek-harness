@@ -1408,17 +1408,13 @@
     "9f6156b070f787b60db69ad515eec1a0fc8ecbbe3742ec5c2c1e109df7992f62": 2,
     "d80d9fb673065fb4761f9c832abd280ed22b8825c65027bb24ca3d70601223ee": 2
   },
-  "packages/llm/token-meter/src/index.ts": {
-    "3df219493866b820bfcb24557fc4b067accff5bae81d87ffd15845a748b4e42a": 1
-  },
   "packages/llm/token-meter/tests/context-breakdown-projection.spec.ts": {
     "058894340d84d12fb37b7198e5f02e8a4ebe025b7e559cc4d2661033ecfdb4db": 1,
     "51a336c440a8b5a8a0617a914049b38092a268ffc01eccbab4ae6cf1e883f5d1": 1
   },
   "packages/llm/token-meter/tests/token-meter.spec.ts": {
     "12ce907bddd3b2c517d47923e81fa90a4bef0edb26a1cf575bc454ab69faff25": 1,
-    "e1afcf3bd21c4348c25c31b75c3d96e12710fc3bb3165da6a77a48731cb7e737": 1,
-    "e87443b2dcbfcd641eba56e2afb1b9daaa697f89df846c40cdea6bfb9b8a7ef3": 1
+    "e1afcf3bd21c4348c25c31b75c3d96e12710fc3bb3165da6a77a48731cb7e737": 1
   },
   "packages/llm/token-meter/tests/turn-usage.spec.ts": {
     "2312a66ba30733088a1b1be2553279db1d74f2ddc20523b139b4a18097711885": 1,

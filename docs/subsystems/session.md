@@ -90,6 +90,10 @@ interface SessionEventMap {
     message: AssistantMessage
     /** Exact timed model stream, compacted without joining delta boundaries. */
     stream: AssistantStreamRecord[]
+    /** Captured at dispatch, not reconstructed from the surface at settlement. */
+    request?: RequestDispatch
+    /** Own-message hint under the named context's native projection, without replay blobs or usage copies. */
+    replayPrice?: { readonly contextSeq: SessionSeq; readonly price: LlmReplayPrice }
     usage?: TokenUsage
     interrupted?: true
   }
@@ -98,7 +102,7 @@ interface SessionEventMap {
    * preserves a failed, retried, cancelled, or stream-error attempt that
    * reached settlement without fabricating model-visible history.
    */
-  'assistant/attempt': { turn: number; step: number; stream: AssistantStreamRecord[] }
+  'assistant/attempt': { turn: number; step: number; stream: AssistantStreamRecord[]; request?: RequestDispatch }
   /**
    * The model requested one tool invocation: `name` with the raw `arguments`
    * JSON string exactly as the model produced it (unparsed). `callId` pairs the
@@ -140,8 +144,8 @@ interface SessionEventMap {
     startsSeries?: true
   }
   /**
-   * Route metadata for the next request, logged only when the route, capacity,
-   * or system prompt update mode changes. It does not participate in request
+   * Route, reserve, policy, and changed-only pricing facts for the next request.
+   * Logged when those facts change. It does not participate in request
    * reconstruction or header equality. Prompt admission uses the bound prepared
    * call's capability, not this snapshot from an earlier request.
    */
@@ -205,9 +209,10 @@ interface EpochHeader {
 
 Current event acceptance requires canonical `request/header.header`: any `system` field is forbidden, and `tools: []` and `adapterDefaults: {}` must be omitted. Whitespace-only system-message content, `config.stop: []`, and nested extensions remain unchanged. Seed, append, and current persistence reads reject noncanonical headers rather than silently normalizing them; [the V3 envelope decision](../../.agents/notes/implemented/architecture/2026-09-06-v3-canonical-session-envelopes.md) owns historical conversion. Legacy v0 logs containing `request/header-delta` or its full-snapshot `fallback` reason are rejected rather than replayed incompletely.
 
+<a id="the-route-capacity-event-requestcontext"></a>
 ### The route capacity event: `request/context`
 
-The context metadata of the route a request resolved to is separate logged state, appended beside `request/header` inside the same step and only when the provider, model, capacity, or `systemPromptUpdate` mode differs from the previous record. It stays outside `EpochHeader` because that type is the reconstruction contract compared field-wise by `headerEquals`: capacity and the update mode describe a route, not a request input, so folding them in would let a route change register as a request-envelope `change` and would pull adapter metadata into the loop's request reconstruction. Like `request/header`, it is not a `SurfaceEventType` and produces no LLM message. `session.requestContext()` folds the latest record incrementally; the agent loop reads that record's `systemPromptUpdate` when it decides whether a changed system prompt replaces the latest system node or is appended after the cached history ([decision rule](../../packages/core/agent-loop/README.md#understand-the-implementation)). A route whose adapter advertises no capacity is recorded with `contextWindow` absent, so the new record clears an older route's capacity; a route without a declared update mode likewise clears an older route's `systemPromptUpdate`.
+`request/context` stores registration-bound route metadata and changed-only pricing facts outside `EpochHeader`. It produces no model message and does not alter header equality. Route records retain capacity, response reserve, replay scope, representation receipts, and advisory last-used retention. Missing capacity or reserve remains unknown; a scope change invalidates previous hints. `replayPrices` and `projectionPrices` carry only changed message facts, not complete history copies. The token meter folds these records during live and cold replay; prompt admission still uses the prepared call's capability, not an older metadata record.
 
 ```ts type-equiv
 /** Registration-bound metadata for one resolved model route. */
@@ -220,6 +225,33 @@ interface RequestContext {
   contextWindow?: number
   /** `'in-history'` when the route reads the latest `system` message at any position as the effective system prompt. */
   systemPromptUpdate?: SystemPromptUpdate
+  /** Response reserve before input-dependent clamping; may be a conservative native ceiling, absent means unknown. */
+  outputReserve?: number
+  /** Native replay projection identity from the frozen adapter generation. */
+  replayPricing?: LlmReplayPricingScope
+  /** Changed-only assistant hints under replayPricing; a scope change invalidates previous hints. */
+  replayPrices?: readonly LlmReplayPrice[]
+  /** Changed-only message representation receipts under this route and projection scope. */
+  projectionPrices?: readonly LlmMessageProjectionPrice[]
+  /** Estimated declaration cost after historical/deferred tool projection under the captured route policy. */
+  toolProjection?: { readonly tokens: number; readonly mode: 'none' | 'addition-only' | 'in-history' }
+  /** Advisory policy used by the most recent compaction decision, not a restriction on request history. */
+  retention?: { readonly retainTokens: number; readonly retainRatio?: number; readonly source: 'model' | 'settings' | 'config' }
+}
+```
+
+### Actual dispatch cut
+
+The loop captures `RequestDispatch` after admission, header logging, pricing refresh, and immutable request derivation. An assistant settlement or failed attempt refers to that exact exclusive log cut and its header/context events, not the surface that happens to exist when streaming ends. An assistant's optional `replayPrice` identifies its own immutable message under the captured context scope. Old settlements without these optional facts remain readable; consumers must mark reconstructed estimates as such rather than invent a dispatch observation. Idle compaction stores prospective pricing on `compaction/start.pricing` without creating a conversation request.
+
+```ts type-equiv
+/** Exact immutable Session prefix and request metadata used by one dispatched attempt. */
+interface RequestDispatch {
+  readonly version: 1
+  /** Exclusive log cut whose projected history supplied the frozen request array. */
+  readonly logOffset: SessionLogOffset
+  readonly headerSeq: SessionSeq
+  readonly contextSeq: SessionSeq
 }
 ```
 

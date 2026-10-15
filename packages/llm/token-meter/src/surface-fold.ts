@@ -1,15 +1,12 @@
 /**
- * Positional pricing shared by measurement and the context-breakdown fold:
- * measurement retains attachment details for route pricing; breakdown keeps
- * only retained node identities, heuristic prices, and system classification.
- * The occupancy projection uses the scalar shadow-price protocol instead.
+ * Positional heuristic analysis and replacement validation for shared accounting.
  *
  * The fold is a plan/commit pair: {@link planSurfaceTokens} runs every
  * fallible step read-only and {@link commitSurfaceTokens} mutates in place,
  * so a throw leaves the caller's state untouched and the same malformed
  * event fails identically on every retry.
- * Nodes also carry durable attachment occurrences and their structural prices,
- * so `measure()` can price the request representation sent to the model.
+ * Temporary nodes expose attachment occurrences and structural prices; the
+ * accounting checkpoint retains only occurrence counts/flags and price receipts.
  *
  * @module @deepseek-ai/dsh-token-meter/surface-fold
  */

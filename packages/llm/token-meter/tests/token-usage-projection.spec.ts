@@ -361,14 +361,15 @@ function appendAssistant(
 describe('contextPressure session projection', () => {
   it('serves no pressure or capacity for an empty log', async () => {
     const { ctx, session } = await harness()
-    expect(pressure(ctx, session)).toEqual({})
+    expect(pressure(ctx, session)).toEqual({ projectedTokens: 0, quality: 'estimated', unattributedTokens: 0 })
   })
 
   it('does not synthesize zero pressure before a provider usage sample', async () => {
     const { ctx, session } = await harness()
     startStep(session, 1, 1)
     recordContext(session, 'small', 64_000)
-    expect(pressure(ctx, session)).toEqual({ contextWindow: 64_000 })
+    expect(pressure(ctx, session)).toMatchObject({ contextWindow: 64_000, projectedTokens: 0, quality: 'estimated' })
+    expect(pressure(ctx, session)).not.toHaveProperty('pressureTokens')
   })
 
   it('sums prompt-side buckets and excludes response output', async () => {
@@ -400,13 +401,14 @@ describe('contextPressure session projection', () => {
     startStep(session, 1, 1)
     recordContext(session, 'small', 64_000)
     usageChunk(session, { inputTokens: 100, outputTokens: 10 }, 1, 1)
-    expect(pressure(ctx, session)).toEqual({
+    expect(pressure(ctx, session)).toMatchObject({
       pressureTokens: 100, projectedTokens: 100, contextWindow: 64_000,
     })
     recordContext(session, 'large', 256_000)
-    expect(pressure(ctx, session)).toEqual({
-      pressureTokens: 100, projectedTokens: 100, contextWindow: 256_000,
+    expect(pressure(ctx, session)).toMatchObject({
+      lastObservedInputTokens: 100, projectedTokens: 0, contextWindow: 256_000, model: 'large',
     })
+    expect(pressure(ctx, session)).not.toHaveProperty('pressureTokens')
   })
 
   it('removes an older capacity when the newest route advertises none', async () => {
@@ -415,7 +417,8 @@ describe('contextPressure session projection', () => {
     recordContext(session, 'small', 64_000)
     usageChunk(session, { inputTokens: 100, outputTokens: 10 }, 1, 1)
     recordContext(session, 'unknown')
-    expect(pressure(ctx, session)).toEqual({ pressureTokens: 100, projectedTokens: 100 })
+    expect(pressure(ctx, session)).toMatchObject({ lastObservedInputTokens: 100, projectedTokens: 0 })
+    expect(pressure(ctx, session)).not.toHaveProperty('contextWindow')
   })
 
   it('pushes no change for unrelated events or a restated capacity', async () => {
@@ -430,9 +433,10 @@ describe('contextPressure session projection', () => {
 
     session.append('session/end-seed', {})
     expect(changed).not.toContain('contextPressure')
-    // A repeated capacity record for the same window is also a no-op.
+    // An identical record still changes the request/context identity for later cuts.
     recordContext(session, 'small', 64_000)
-    expect(changed).not.toContain('contextPressure')
+    expect(changed).toContain('contextPressure')
+    changed.length = 0
     // A real capacity change still reports.
     recordContext(session, 'large', 256_000)
     expect(changed).toContain('contextPressure')
@@ -446,13 +450,13 @@ describe('contextPressure session projection', () => {
     const checkpoint = JSON.parse(JSON.stringify(
       ctx.sessionProjections.checkpoint(session),
     )) as ReturnType<typeof ctx.sessionProjections.checkpoint>
-    expect(checkpoint.contextPressure?.ver).toBe(5)
+    expect(checkpoint.contextPressure?.ver).toBe(6)
 
     await meterFiber.dispose()
     expect(ctx.sessionProjections.snapshot(session).values).not.toHaveProperty('contextPressure')
 
     await ctx.plugin(TokenMeter)
-    expect(ctx.sessionProjections.viewCheckpoint(checkpoint).contextPressure).toEqual({
+    expect(ctx.sessionProjections.viewCheckpoint(checkpoint).contextPressure).toMatchObject({
       pressureTokens: 42,
       projectedTokens: 42,
       contextWindow: 64_000,
@@ -509,7 +513,7 @@ describe('contextPressure session projection', () => {
     }
   })
 
-  it('folds a replacement without a claim at zero', async () => {
+  it('reprices a replacement without requiring a heuristic shadow-price claim', async () => {
     const { ctx, session } = await harness()
     const question = appendUser(session, 'a question from an unmetered log')
     startStep(session, 1, 1)
@@ -525,16 +529,18 @@ describe('contextPressure session projection', () => {
       sourceEventSeqs: [question],
     })
 
-    expect(pressure(ctx, session)).toEqual(before)
+    const after = pressure(ctx, session)
+    expect(after.pressureTokens).toBe(before.pressureTokens)
+    expect(after.projectedTokens).toBe(ctx.tokenMeter.measure(session).inputTokens)
+    expect(after.projectedTokens).not.toBe(before.projectedTokens)
   })
 
-  it('clamps a projection that heuristic error drove below zero', async () => {
+  it('does not lend negative old-anchor bias to surviving input after replacement', async () => {
     const { ctx, session } = await harness()
     recordContext(session, 'large', 128_000)
     const question = appendUser(session, 'a question long enough to outprice the sample'.repeat(4))
     startStep(session, 1, 1)
-    // A provider sample far below the heuristic price of what it replaced:
-    // shadowing that span subtracts more than the sample holds.
+    // The whole-request sample does not establish this span's exact reclaim.
     appendAssistant(session, 'ok', { inputTokens: 3, outputTokens: 1 }, 1, 1)
     session.append('step/end', { turn: 1, step: 1 })
     appendSummaryMeter(ctx, session, question, question)
@@ -545,6 +551,7 @@ describe('contextPressure session projection', () => {
       surfaceOp: { op: 'replace', startSeq: question, endSeq: question },
       sourceEventSeqs: [question],
     })
-    expect(pressure(ctx, session).projectedTokens).toBe(0)
+    expect(pressure(ctx, session).projectedTokens).toBe(18)
+    expect(pressure(ctx, session).projectedTokens).toBe(ctx.tokenMeter.measure(session).surfaceTokens)
   })
 })

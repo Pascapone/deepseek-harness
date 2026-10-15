@@ -6,10 +6,12 @@
 
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { CompactionEngine, ManualCompactionError } from '@deepseek-ai/dsh-compaction'
+import { CompactionEngine, isCompactCheckpointSource, ManualCompactionError } from '@deepseek-ai/dsh-compaction'
 import type { CompactionResult, CompactionTrigger } from '@deepseek-ai/dsh-compaction'
-import type { Session, SessionSeq } from '@deepseek-ai/dsh-session'
-import { CONTEXT_WINDOW_EXCEEDED_CODE } from '@deepseek-ai/dsh-llm'
+import { SessionSeq } from '@deepseek-ai/dsh-session'
+import type { RequestContext, Session } from '@deepseek-ai/dsh-session'
+import { CONTEXT_WINDOW_EXCEEDED_CODE, createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { TokenMeasurement } from '@deepseek-ai/dsh-token-meter'
 import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
@@ -21,18 +23,24 @@ import {
   resolveConfig,
   resolveTargetPolicy,
   TargetPressureConfigError,
+  CompactionBudgetError,
 } from './config.ts'
 import {
   assertNoActiveCompaction,
   compactSurfaceRegion,
   selectCompactableRange,
+  safeCompactionEnds,
+  buildSummarizationInput,
 } from './region.ts'
-import { summarizeWithLlm } from './summarizer.ts'
+import { frameSummary, prepareSummarization, summarizeWithLlm } from './summarizer.ts'
+import type { RetentionPreference } from './retention-settings.ts'
 import type { SummarizationInput, SummaryResult } from './summarizer.ts'
 import type {
   BasicCompactionConfig,
   ModelCompactPolicyConfig,
   ResolvedConfig,
+  ResolvedTargetPolicy,
+  ResolvedCompactSpec,
 } from './types.ts'
 
 export type {
@@ -44,6 +52,13 @@ export type {
   ResolvedRetention,
   ResolvedTargetPolicy,
 } from './types.ts'
+
+export { CompactionBudgetError } from './config.ts'
+
+interface CompactionOperation {
+  readonly policy: ResolvedTargetPolicy
+  remainingCalls: number
+}
 
 /** Resolve the exact provider/model durably routed for the latest request. */
 function routedTarget(
@@ -58,13 +73,13 @@ function routedTarget(
 
 /**
  * Output tokens the routed request reserves, which the provider charges to the
- * same window as the prompt. The effective envelope's own cap wins; otherwise
- * the adapter's per-request default, which the adapter materializes when that
- * envelope omits one. No declared cap means no reservation.
+ * same window as the prompt. A captured provider-adjusted reserve wins over
+ * the envelope's plain cap and the adapter default. Absence remains unknown
+ * in public measurement; legacy text-only policy scaling uses zero.
  */
-function reservedCompletionTokens(agent: Agent, defaultMaxTokens: number | undefined): number {
+function reservedCompletionTokens(agent: Agent, defaultMaxTokens: number | undefined, measured?: number): number {
   const configured = agent.session.requestHeader()?.config.maxTokens
-  return configured ?? defaultMaxTokens ?? 0
+  return measured ?? configured ?? defaultMaxTokens ?? 0
 }
 
 /** Resolve the conversation target used to select an optional policy override. */
@@ -133,10 +148,15 @@ export class BasicCompactionEngine extends CompactionEngine {
   private readonly warnedPressureConfigTargets = new Set<string>()
   private readonly overflowRetries = new WeakMap<Agent, number>()
   private readonly overflowAgents = new WeakMap<Session, Agent>()
+  private readonly operations = new WeakMap<Agent, CompactionOperation>()
+  private readonly knownTargets = new Map<string, { provider: string; model: string; contextWindow: number; reserve: number }>()
 
   constructor(ctx: Context, config: BasicCompactionConfig = {}) {
     super(ctx)
     this.config = resolveConfig(config)
+    ctx.inject(['compactionRetention'], (scoped) => {
+      scoped.effect(() => scoped.compactionRetention.registerValidator((preference) =>{  this.validateRetention(preference) }))
+    })
     if (this.config.auto) this._registerAutomaticCompaction()
   }
 
@@ -164,6 +184,7 @@ export class BasicCompactionEngine extends CompactionEngine {
           const result = await this.compactIfNeeded(agent, 'pressure', signal)
           if (result !== null) logResult(result, 'step pressure')
         } catch (error: unknown) {
+          if (error instanceof CompactionBudgetError) throw error
           if (error instanceof TargetPressureConfigError) {
             if (this.warnedPressureConfigTargets.has(error.targetKey)) return next()
             this.warnedPressureConfigTargets.add(error.targetKey)
@@ -195,7 +216,7 @@ export class BasicCompactionEngine extends CompactionEngine {
       this.overflowAgents.set(agent.session, agent)
       const target = routedTarget(agent.session)
       if (target === undefined) return next()
-      const policy = resolveTargetPolicy(this.config, target)
+      const policy = this.policyFor(target)
       const retries = this.overflowRetries.get(agent) ?? 0
       if (retries >= policy.maxOverflowRetries) return next()
 
@@ -204,6 +225,7 @@ export class BasicCompactionEngine extends CompactionEngine {
       try {
         result = await this.compactIfNeeded(agent, 'context-overflow', signal)
       } catch (recoveryError: unknown) {
+        if (recoveryError instanceof CompactionBudgetError) throw recoveryError
         const message = recoveryError instanceof Error ? recoveryError.message : String(recoveryError)
         // A model-free prune can land before later summary work fails. That
         // durable reduction is sufficient retry proof; do not discard it just
@@ -252,7 +274,7 @@ export class BasicCompactionEngine extends CompactionEngine {
     const target = conversationTarget(agent)
     const config = target === undefined
       ? this.config
-      : resolveTargetPolicy(this.config, target)
+      : this.operations.get(agent)?.policy ?? this.policyFor(target)
     return summarizeWithLlm(this.ctx, config, input, agent, signal)
   }
 
@@ -273,9 +295,10 @@ export class BasicCompactionEngine extends CompactionEngine {
   ): Promise<CompactionResult | null> {
     const target = routedTarget(agent.session)
     if (target === undefined) return null
-    const policy = resolveTargetPolicy(this.config, target)
+    assertNoActiveCompaction(agent.session, 'automatic pressure compaction')
+    const policy = this.policyFor(target)
     const meter = this.ctx.tokenMeter
-    let measurement = meter.measure(agent.session)
+    let measurement = meter.refresh(agent.session)
     switch (trigger) {
       case 'context-overflow':
         break
@@ -286,59 +309,31 @@ export class BasicCompactionEngine extends CompactionEngine {
         assertNever(trigger, 'compaction trigger')
     }
 
-    // Pruning is optional so compaction-basic remains independently composable.
-    // Overflow always qualifies; pressure first resolves the routed model's
-    // capacity and checks its target-specific threshold.
     const prune = this.ctx.get('toolResultPruner')
-
-    if (trigger === 'context-overflow') {
-      if (prune !== undefined) {
-        prune.pruneSession(agent.session)
-        measurement = meter.measure(agent.session)
-      }
-      const range = selectCompactableRange(agent.session, measurement, 0)
-      if (range === null) return null
-      return this.compactRegion(range.start, range.end, agent, signal)
-    }
-
-    const info = await this.ctx.llm.resolveModelInfo(target.provider, target.model, signal)
+    const spec = await this.resolveSpec(agent, policy, measurement, signal)
     assertNoActiveCompaction(agent.session, 'automatic pressure compaction')
-    const targetKey = `${target.provider}/${target.model}`
-    if (info.context === undefined) {
-      throw new TargetPressureConfigError(
-        targetKey,
-        `compaction-basic: no context capacity for ${targetKey}; `
-        + 'configure contextWindow on that adapter model',
-      )
-    }
-    const spec = resolveCompactSpec(
-      policy,
-      info.context.contextWindow,
-      reservedCompletionTokens(agent, info.defaultMaxTokens),
-    )
-    if (measurement.totalTokens < spec.thresholdTokens) return null
-
-    // Once pressure qualifies, land the model-free pass before choosing a
-    // summary range, then remeasure through the singleton replay fold.
+    this.recordPolicy(agent.session, policy, spec)
+    measurement = meter.refresh(agent.session)
+    if (trigger === 'pressure' && measurement.inputTokens < spec.thresholdTokens) return null
+    const generation = agent.session.surface.replaceGeneration
     if (prune !== undefined) {
       prune.pruneSession(agent.session)
-      measurement = meter.measure(agent.session)
+      measurement = meter.refresh(agent.session)
     }
-    if (measurement.totalTokens < spec.thresholdTokens) return null
-
-    let result: CompactionResult | null = null
-    for (let attempt = 0; attempt <= spec.compactionRetries; attempt += 1) {
-      const range = selectCompactableRange(agent.session, measurement, spec.retainTokens)
-      if (range === null) return result
-      result = await this.compactRegion(range.start, range.end, agent, signal)
-      measurement = meter.measure(agent.session)
-      if (measurement.totalTokens < spec.thresholdTokens) return result
-    }
-
-    throw new Error(
-      `compaction still above threshold after ${spec.compactionRetries + 1} compaction attempts `
-      + `(${measurement.totalTokens} estimated tokens >= threshold ${spec.thresholdTokens})`,
-    )
+    if (agent.session.surface.replaceGeneration > generation && measurement.inputTokens <= spec.targetTokens && !measurement.nodes.some(node => node.quality === 'incomplete')) return null
+    if (trigger === 'pressure' && measurement.inputTokens <= spec.targetTokens) return null
+    return this.withOperation(agent, policy, async () => {
+      let targetTokens: number | undefined
+      for (let attempt = 0; attempt <= spec.compactionRetries; attempt += 1) {
+        const range = selectCompactableRange(agent.session, measurement, trigger === 'context-overflow' ? 0 : spec.retainTokens)
+        if (range === null) throw new CompactionBudgetError(`compaction has no safe useful range while input ${measurement.inputTokens} remains critical (target ${spec.targetTokens}); retained or indivisible input cannot be reduced`)
+        targetTokens = this.assertPossibleGoal(measurement, range, spec, policy.headroomTokens, targetTokens)
+        const result = await this.compactRegion(range.start, range.end, agent, signal)
+        measurement = meter.refresh(agent.session)
+        if (measurement.inputTokens <= targetTokens && !measurement.nodes.some(node => node.quality === 'incomplete')) return result
+      }
+      throw new CompactionBudgetError(`compaction still above target after ${spec.compactionRetries + 1} compaction attempts (${measurement.inputTokens} input tokens; target ${targetTokens ?? spec.targetTokens})`)
+    })
   }
 
   /**
@@ -356,15 +351,13 @@ export class BasicCompactionEngine extends CompactionEngine {
     agent: Agent,
     signal?: AbortSignal,
   ): Promise<CompactionResult> {
-    return compactSurfaceRegion(
-      this.regionDependencies(),
-      agent.session,
-      start,
-      end,
-      agent,
-      { owner: 'current-turn', stability: 'whole-surface' },
-      signal,
-    )
+    assertNoActiveCompaction(agent.session, 'compaction')
+    const measurement = this.ctx.tokenMeter.refresh(agent.session)
+    if (measurement.nodes.length !== agent.session.surface.nodes.length || measurement.nodes.some((node, index) => node.seq !== agent.session.surface.nodes[index])) throw new Error('compaction: selected surface changed before summarization began')
+    const target = conversationTarget(agent)
+    const policy = this.operations.get(agent)?.policy ?? this.policyFor(target ?? { provider: '', model: '' })
+    return this.withOperation(agent, policy, operation => this.compactChosen(start, end, agent, operation,
+      { owner: 'current-turn', stability: 'whole-surface' }, signal))
   }
 
   /**
@@ -386,28 +379,41 @@ export class BasicCompactionEngine extends CompactionEngine {
         const operationSignal = AbortSignal.any([agentSignal, signal])
         try {
           operationSignal.throwIfAborted()
+          assertNoActiveCompaction(agent.session, 'manual compaction')
+          const target = conversationTarget(agent)
+          if (target === undefined) return null
+          const policy = this.policyFor(target)
+          const preview = this.ctx.tokenMeter.preview(agent.session)
+          const spec = await this.resolveSpec(agent, policy, preview.measurement, operationSignal)
+          operationSignal.throwIfAborted()
+          const { retainTokens: _tokens, retainRatio: _ratio, ...inheritedPolicy } = policy
+          const manualPolicy: ResolvedTargetPolicy = policy.explicitRetention ? policy : { ...inheritedPolicy, retainTokens: 0 }
+          const manualSpec = policy.explicitRetention ? spec : { ...spec, retainTokens: 0 }
+          const pricing = this.policyContext(agent.session, manualPolicy, manualSpec, preview.context)
           const range = selectCompactableRange(
             agent.session,
-            this.ctx.tokenMeter.measure(agent.session),
-            0,
+            preview.measurement,
+            policy.explicitRetention ? spec.retainTokens : 0,
           )
-          if (range === null) return null
-          return await compactSurfaceRegion(
-            this.regionDependencies(),
-            agent.session,
-            range.start,
-            range.end,
-            agent,
-            {
+          if (range === null) {
+            if (preview.measurement.inputTokens >= spec.thresholdTokens) throw new CompactionBudgetError(`manual compaction has no safe useful range while input ${preview.measurement.inputTokens} remains critical (target ${spec.targetTokens})`)
+            return null
+          }
+          const targetTokens = preview.measurement.inputTokens >= spec.thresholdTokens
+            ? this.assertPossibleGoal(preview.measurement, range, spec, policy.headroomTokens) : spec.targetTokens
+          const result = await this.withOperation(agent, manualPolicy,
+            operation => this.compactChosen(range.start, range.end, agent, operation, {
               owner: null,
               stability: 'selected-span',
+              ...pricing === undefined ? {} : { pricing },
               ...sourceCommandId === undefined ? {} : { sourceCommandId },
               flush: async () => {
                 await this.ctx.sessions.flush(agent.session)
               },
-            },
-            operationSignal,
-          )
+            }, operationSignal))
+          const after = this.ctx.tokenMeter.measure(agent.session)
+          if (after.inputTokens > targetTokens || after.nodes.some(node => node.quality === 'incomplete')) throw new CompactionBudgetError(`manual compaction made progress but input ${after.inputTokens} is not safely below target ${targetTokens}`)
+          return result
         } catch (error: unknown) {
           if (agentSignal.aborted && operationSignal.reason === agentSignal.reason) {
             throw new ManualCompactionError(
@@ -429,11 +435,187 @@ export class BasicCompactionEngine extends CompactionEngine {
     }
   }
 
-  /** Bind the effective token meter and dynamically dispatched summarizer hook. */
-  private regionDependencies(): Parameters<typeof compactSurfaceRegion>[0] {
+  /** Capture Settings once; an exact-model retention declaration remains authoritative. */
+  private policyFor(target: Pick<LlmCallConfig, 'provider' | 'model'>): ResolvedTargetPolicy {
+    return resolveTargetPolicy(this.config, target, this.ctx.get('compactionRetention')?.current())
+  }
+
+  /** Validate only owned active routes and previously resolved capacities, without network work. */
+  private validateRetention(preference: Readonly<RetentionPreference>): void {
+    const override = preference.mode === 'tokens' ? { retainTokens: preference.value }
+      : preference.mode === 'ratio' ? { retainRatio: preference.value } : {}
+    resolveTargetPolicy(this.config, { provider: '', model: '' }, override)
+    for (const model of this.config.modelPolicies) resolveTargetPolicy(this.config, model, override)
+    const known = new Map(this.knownTargets)
+    for (const active of this.ctx.get('agents')?.list() ?? []) {
+      if (active.ctx.get('compaction') !== this) continue
+      const target = conversationTarget(active)
+      const context = active.session.requestContext()
+      if (target === undefined || context?.provider !== target.provider
+        || context.model !== target.model || context.contextWindow === undefined) continue
+      known.set(`${target.provider}\0${target.model}`, { ...target, contextWindow: context.contextWindow, reserve: context.outputReserve ?? active.session.requestHeader()?.config.maxTokens ?? 0 })
+    }
+    for (const target of known.values()) {
+      resolveCompactSpec(resolveTargetPolicy(this.config, target, override), target.contextWindow, target.reserve)
+    }
+  }
+
+  /** Resolve capacity and reserve together, retaining the route for synchronous Settings validation. */
+  private async resolveSpec(
+    agent: Agent, policy: ResolvedTargetPolicy, measurement: TokenMeasurement, signal: AbortSignal,
+  ): Promise<ResolvedCompactSpec> {
+    const target = policy.target
+    const info = await this.ctx.llm.resolveModelInfo(target.provider, target.model, signal)
+    if (info.context === undefined) throw new TargetPressureConfigError(`${target.provider}/${target.model}`, `compaction-basic: no context capacity for ${target.provider}/${target.model}; configure contextWindow on that adapter model`)
+    const reserve = reservedCompletionTokens(agent, info.defaultMaxTokens, measurement.outputReserveTokens)
+    this.knownTargets.set(`${target.provider}\0${target.model}`, { ...target, contextWindow: info.context.contextWindow, reserve })
+    return resolveCompactSpec(policy, info.context.contextWindow, reserve)
+  }
+
+  /** Changed-only policy facts; price arrays are retained only when freshly captured. */
+  private policyContext(
+    session: Session, policy: ResolvedTargetPolicy, spec: ResolvedCompactSpec, captured?: RequestContext,
+  ): RequestContext | undefined {
+    const previous = session.requestContext()
+    const { replayPrices: _replay, projectionPrices: _projection, ...base } = previous ?? { ...policy.target }
+    const retention = { retainTokens: spec.retainTokens, source: policy.retentionSource,
+      ...policy.retainRatio === undefined ? {} : { retainRatio: policy.retainRatio } }
+    if (captured === undefined && previous?.provider === policy.target.provider && previous.model === policy.target.model
+      && previous.contextWindow === spec.contextWindow && JSON.stringify(previous.retention) === JSON.stringify(retention)) return undefined
+    return { ...previous?.provider === policy.target.provider && previous.model === policy.target.model ? base : {},
+      ...captured, ...policy.target, contextWindow: spec.contextWindow, retention }
+  }
+
+  /** Record policy only inside the actual open turn. */
+  private recordPolicy(session: Session, policy: ResolvedTargetPolicy, spec: ResolvedCompactSpec): void {
+    const context = this.policyContext(session, policy, spec)
+    if (context !== undefined) session.append('request/context', context)
+  }
+
+  /** One operation owns one retention snapshot and one bounded summary-call allowance. */
+  private async withOperation<T>(
+    agent: Agent, policy: ResolvedTargetPolicy, run: (operation: CompactionOperation) => Promise<T>,
+  ): Promise<T> {
+    const active = this.operations.get(agent)
+    if (active !== undefined) return run(active)
+    const operation = { policy, remainingCalls: policy.compactionRetries + 1 }
+    this.operations.set(agent, operation)
+    try { return await run(operation) } finally { this.operations.delete(agent) }
+  }
+
+  /** Reject an immovable tail/fixed-input goal before paying for any summary. */
+  private assertPossibleGoal(
+    measurement: TokenMeasurement, range: { start: SessionSeq; end: SessionSeq },
+    spec: ResolvedCompactSpec, headroom: number, target?: number,
+  ): number {
+    const start = measurement.nodes.findIndex(node => node.seq === range.start)
+    const end = measurement.nodes.findIndex(node => node.seq === range.end)
+    const selected = measurement.nodes.slice(start, end + 1)
+    if (measurement.nodes.some(node => node.quality === 'incomplete')) throw new CompactionBudgetError('compaction cannot safely price selected or retained request history; refresh its adapter metadata or offload unsupported media first')
+    const tokens = selected.reduce((sum, node) => sum + node.tokens, 0)
+    const framing = this.ctx.tokenMeter.estimateMessage(createUserMessage({ source: { kind: 'user' }, content: frameSummary([{ type: 'text', text: 'x' }]) }))
+    // ponytail: declarations stay fixed for goal checks; project prospective tool history if conservative refusal becomes limiting.
+    const retained = measurement.nodes.reduce((sum, node, index) => sum + (index < start || index > end ? node.tokens : 0), 0)
+    const floor = Math.max(measurement.inputTokens - tokens,
+      measurement.toolsTokens + retained + measurement.unattributedTokens) + framing
+    if (tokens <= framing) throw new CompactionBudgetError(`compaction cannot reach input target ${target ?? spec.targetTokens}: selected ${tokens} tokens cannot shrink below checkpoint framing ${framing}`)
+    if (floor >= spec.thresholdTokens || (target !== undefined && floor > target)) throw new CompactionBudgetError(`compaction cannot reach input target ${target ?? spec.targetTokens}: minimum fixed/retained input plus checkpoint is ${floor} tokens`)
+    const relief = Math.min(headroom, Math.floor((spec.thresholdTokens - floor) / 2))
+    return target ?? spec.thresholdTokens - Math.max(1, relief)
+  }
+
+  /** Condense every original selected node; a first partial chunk is not completion. */
+  private async compactChosen(
+    start: SessionSeq, end: SessionSeq, agent: Agent, operation: CompactionOperation,
+    options: Parameters<typeof compactSurfaceRegion>[5], signal?: AbortSignal,
+  ): Promise<CompactionResult> {
+    const session = agent.session
+    const initial = [...session.surface.nodes]
+    const first = initial.indexOf(start)
+    const last = initial.indexOf(end)
+    if (first < 0 || last < first) {
+      return compactSurfaceRegion(this.regionDependencies(operation), session, start, end, agent, options, signal)
+    }
+    const originals = new Set(initial.slice(first, last + 1))
+    if (originals.size === 1) {
+      const message = buildSummarizationInput(session, [start]).messages.at(-1)
+      if (message?.role === 'user' && isCompactCheckpointSource(message.source)) throw new CompactionBudgetError('compaction: a sole existing checkpoint has no new original history to summarize')
+    }
+    const { pricing: _initialPricing, ...transaction } = options
+    let result: CompactionResult | undefined
+    let pricing = options.pricing
+    for (;;) {
+      signal?.throwIfAborted()
+      const remaining = session.surface.nodes.filter(seq => originals.has(seq))
+      const chunkEnd = remaining.at(-1)
+      if (chunkEnd === undefined) {
+        if (result === undefined) throw new CompactionBudgetError('compaction: selected history disappeared before summarization')
+        return result
+      }
+      if (operation.remainingCalls <= 0) throw new CompactionBudgetError(`compaction exhausted ${operation.policy.compactionRetries + 1} summary calls before all selected original history was condensed`)
+      const chunkStart = result === undefined ? start : SessionSeq(result.summarySeq + 1)
+      const measurement = options.owner === null ? this.ctx.tokenMeter.preview(session).measurement : this.ctx.tokenMeter.refresh(session)
+      let chosenEnd = chunkEnd
+      let prepared: Awaited<ReturnType<typeof prepareSummarization>> | undefined
+      if (this.summarize === BasicCompactionEngine.prototype.summarize) {
+        const nodes = session.surface.nodes
+        const from = nodes.indexOf(chunkStart)
+        const to = nodes.indexOf(chunkEnd)
+        const full = buildSummarizationInput(session, nodes.slice(from, to + 1))
+        prepared = await prepareSummarization(this.ctx, operation.policy, full, agent, signal)
+        const fullTokens = prepared.price(full)
+        if (fullTokens + prepared.outputReserve > prepared.contextWindow) {
+          const ends = safeCompactionEnds(session, measurement, chunkStart, chunkEnd)
+          // ponytail: positional searches are quadratic; cache an index map if prefix preflight becomes a measured bottleneck.
+          let unitStart = from
+          for (const endpoint of ends) {
+            const unitEnd = nodes.indexOf(endpoint)
+            const unit = buildSummarizationInput(session, nodes.slice(unitStart, unitEnd + 1))
+            if (prepared.price(unit) + prepared.outputReserve > prepared.contextWindow) throw new CompactionBudgetError(`compaction summary: an indivisible tool/cost group cannot fit context ${prepared.contextWindow} with response reserve ${prepared.outputReserve}`)
+            unitStart = unitEnd + 1
+          }
+          let low = 0
+          let high = ends.length - 1
+          let fitting: SessionSeq | undefined
+          while (low <= high) {
+            const middle = Math.floor((low + high) / 2)
+            const candidate = ends[middle]
+            if (candidate === undefined) break
+            const input = buildSummarizationInput(session, nodes.slice(from, nodes.indexOf(candidate) + 1))
+            if (prepared.price(input) + prepared.outputReserve <= prepared.contextWindow) {
+              fitting = candidate
+              low = middle + 1
+            } else high = middle - 1
+          }
+          if (fitting === undefined || (result !== undefined && fitting === chunkStart)) throw new CompactionBudgetError(`compaction summary: fixed input or an indivisible tool/cost group cannot fit context ${prepared.contextWindow} with response reserve ${prepared.outputReserve}`)
+          chosenEnd = fitting
+        }
+        const chosen = measurement.nodes.slice(nodes.indexOf(chunkStart), nodes.indexOf(chosenEnd) + 1)
+        const minimumCheckpoint = this.ctx.tokenMeter.estimateMessage(createUserMessage({ source: { kind: 'user' }, content: frameSummary([]) }))
+        if (chosen.reduce((sum, node) => sum + node.tokens, 0) <= minimumCheckpoint) throw new CompactionBudgetError('compaction summary: no fitting prefix can become smaller after checkpoint framing')
+      }
+      result = await compactSurfaceRegion(this.regionDependencies(operation, prepared), session, chunkStart, chosenEnd, agent,
+        { ...transaction, ...pricing === undefined ? {} : { pricing } }, signal)
+      pricing = undefined
+      if (options.owner !== null) this.ctx.tokenMeter.refresh(session)
+    }
+  }
+
+  /** Bind the operation snapshot and count all summary invocations, including recovery. */
+  private regionDependencies(
+    operation: CompactionOperation, prepared?: Awaited<ReturnType<typeof prepareSummarization>>,
+  ): Parameters<typeof compactSurfaceRegion>[0] {
     return {
       meter: this.ctx.tokenMeter,
-      summarize: (input, owner, abort) => this.summarize(input, owner, abort),
+      summarize: (input, owner, abort) => {
+        if (operation.remainingCalls <= 0) throw new CompactionBudgetError('compaction summary-call allowance exhausted during recovery')
+        operation.remainingCalls -= 1
+        const bound = prepared
+        prepared = undefined
+        return this.summarize === BasicCompactionEngine.prototype.summarize
+          ? bound === undefined ? summarizeWithLlm(this.ctx, operation.policy, input, owner, abort) : bound.summarize(input)
+          : this.summarize(input, owner, abort)
+      },
       recover: (error, agent, sourceEventSeqs, signal) => this.ctx.waterfall('compaction/summary-error', {
         session: agent.session,
         sourceEventSeqs,

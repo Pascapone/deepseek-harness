@@ -89,18 +89,24 @@ export class SettingsController extends TypertRemoteService {
   }
 
   /**
-   * Describe every registered namespace for a configuration page: redacted
+   * Describe registered namespaces for a configuration page: redacted
    * layered values plus the serialized schema the page renders its form from.
+   * @param ns - optional namespace filter for a narrowly scoped durable form.
    * @returns provider writability, local-document presence, and one view per namespace.
    * @throws RemoteError when no settings provider is mounted.
    */
   @Remote
-  describe(): SettingsDescribeValue {
+  describe(ns?: string): SettingsDescribeValue {
+    if (ns !== undefined && !settingsNamespaceRequestSchema.safeParse({ ns }).success) {
+      throw new RemoteError('gateway/bad-request', 'invalid namespace for settings.describe', {})
+    }
     const settings = this.provider()
     return {
       writable: settings.writable,
-      hasDocument: true,
-      namespaces: settings.describe({ redactSecrets: true }).map(namespaceView),
+      hasDocument: ns === undefined,
+      namespaces: settings.describe({ redactSecrets: true })
+        .filter(descriptor => ns === undefined || descriptor.ns === ns)
+        .map(namespaceView),
     }
   }
 

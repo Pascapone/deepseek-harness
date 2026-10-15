@@ -12,7 +12,7 @@ Compaction extends [`SessionEventMap`](session.md) with three event types via de
 
 | Event | Payload | Role |
 |---|---|---|
-| `compaction/start` | `{ turn }` | acquires the log-recorded lock; a number identifies the open automatic turn, while `null` identifies a standalone manual attempt |
+| `compaction/start` | `{ compactionId, sourceCommandId?, turn, pricing? }` | acquires the log-recorded lock; a number identifies the open automatic turn, while `null` identifies standalone maintenance; optional `RequestContext` pricing captures the idle preview without admitting a model request |
 | `compaction/summary` | `{ summary, rawOutput?, llmStreamCall?, shadowedRange, shadowedSeqs, shadowedTokenCount, provider, model, maxTokens?, usage? }` | the safe summary projection, optional complete provider output and usage, an `llmStreamCall: true` marker when producing the result consumed exactly one call through this context's `ctx.llm.stream()` (which requires complete `rawOutput`), the shadowed surface-boundary pair (`start`/`end` seqs — a position span, not a numeric interval), the shadowed seqs in surface order, the estimated token count, and the summarize call's envelope (`provider`, `model`, plus its generation cap when one applied) — logged so the one-shot request is reconstructable from log + code (the reconstructability Agent Note); unmarked `rawOutput` does not identify the call path |
 | `compaction/end` | `{ turn, error? }` | releases the lock with the same numeric-or-null owner (`error` records an unsuccessful attempt) |
 
@@ -101,6 +101,38 @@ type ManualCompactionErrorCode =
 Pressure compaction runs at the `agent/pre-step` waterfall before request derivation. Once pressure or canonical overflow qualifies, compaction-basic invokes optional [`ctx.toolResultPruner`](../../packages/compaction/compaction-tool-result-pruner/README.md) before range selection, remeasures through `ctx.tokenMeter`, and can advance the surface without a summary. Failed-request recovery runs through `agent/request-error` after the failed step closes and returns a retry action only when the surface replacement generation advances, even if later summary work throws after pruning; cancellation still wins. Region boundaries preserve tool-call/result pairing but not whole turns, allowing early closed steps of one oversized turn to compact. `dsh-compaction-basic` owns thresholds, retained-tail policy, overflow caps, and failure handling.
 
 The Service Definition exports `toolPairingBalancedBefore(session, seq)` and `toolPairingBalancedAfter(session, seq)` for the tool-call/result pairing checks before and after a seq. Both validate current surface membership and reject missing seqs and orphan results; the [package contract](../../packages/compaction/compaction/README.md#tool-pairing-boundaries) defines their cache behavior.
+
+<a id="input-budgets-and-bounded-summaries"></a>
+## Input budgets and bounded summaries
+
+`compaction-basic` uses the shared input forecast, not historical input plus response output. It protects complete tool-call/result units and jointly calibrated cost groups. Unknown native or media costs do not establish a safe budget. A selected span must be able to shrink beyond checkpoint framing, and fixed input plus retained history must leave feasible relief below the pressure threshold before a paid summary begins.
+
+The default LLM summarizer prepares one exact route, validates known context capacity and response reserve, and prices the complete summary input, including instruction, projected tools, native replay, media, and residual costs. Oversized selections are processed at safe unit boundaries within the existing operation's summary-call allowance; an oversized indivisible unit fails before dispatch. Later chunks include the preceding checkpoint, and every selected original node must be condensed before the operation completes. A sole existing checkpoint is never summarized again. Auxiliary calls inherit the conversation reasoning effort only on the same provider/model target.
+
+After replacement, the backend remeasures complete input and checks the operation's feasible target; a smaller checkpoint alone is not success. Missing safe ranges, incomplete coverage, exhausted bounded calls, and remaining critical input produce `CompactionBudgetError`. Earlier committed progress can remain when a later chunk fails. Threshold, post-compaction goal, retained-tail target, output reserve, and headroom remain distinct; the [backend contract](../../packages/compaction/compaction-basic/README.md) owns policy details.
+
+## Durable original-history retention
+
+Settings → Context & Compaction stores an explicit fixed-token, ratio, or inherited mode through the normal Host configuration path. The global choice overrides engine defaults but not an exact-model retention policy. Engines sample one immutable policy per operation, validate known model budgets before persistence, and expose the last-used policy separately from a newly saved preference. Unknown routes require capacity validation when resolved. Authenticated remote browsers persist only the approved retention namespace; they do not enable other Host settings.
+
+```ts type-equiv
+/** Explicit mode prevents a previously saved fixed budget from overriding ratio mode. */
+type RetentionPreference =
+  | { mode: 'inherit'; value: 0 }
+  | { mode: 'tokens'; value: number }
+  | { mode: 'ratio'; value: number }
+```
+
+```ts type-equiv
+/** Exactly one validated retention form. */
+type ResolvedRetention =
+  | { readonly retainRatio: number; readonly retainTokens?: never }
+  | { readonly retainRatio?: never; readonly retainTokens: number }
+```
+
+`retainRatio` applies to context capacity minus reserved output, before headroom is deducted; `retainTokens` is an absolute youngest-original-history target. Mode switching removes fixed-token precedence. Native reasoning and tool actions belong to that retained history; system input, tools, summary framing, and new input still consume additional total budget. Safe boundaries can exceed the retention target, but never excuse a critical total. [Resolved policy types](../../packages/compaction/compaction-basic/src/types.ts) retain the winning `retentionSource` and concrete target; an idle manual operation honors explicit retention but may condense all useful history when retention is only an implicit default.
+
+[`CompactionPolicyConfig`](../../packages/compaction/compaction-basic/src/types.ts) declares the shared default and exact-model policy fields. A [`RetentionValidator`](../../packages/compaction/compaction-basic/src/retention-settings.ts) synchronously validates a proposed read-only preference against an active engine's known route capacities without I/O. Register it through `ctx.compactionRetention.registerValidator()` in the engine's effect; throwing rejects the entire Settings or ConfigEditor write before persistence, and disposing the effect removes that engine's validator.
 
 ## Tool-result pruning outcomes
 
@@ -208,6 +240,27 @@ abstract compactRegion( start: SessionSeq, end: SessionSeq, agent: CompactionAge
 Types: [CommandId](commands.md) · [SessionSeq](session.md)
 
 Source: [`packages/compaction/compaction/src/index.ts`](../../packages/compaction/compaction/src/index.ts)
+
+<a id="ctxcompactionretention--compactionretentionsettings"></a>
+
+### `ctx.compactionRetention` — `CompactionRetentionSettings`
+
+Global settings owner shared by preset-scoped compaction engines.
+
+```ts cordis-catalog
+/** Enforce an active engine's known-model budget before any Settings or ConfigEditor write.
+ * @param validate Synchronous validation; throw an actionable error to reject the entire write.
+ * @returns Disposer, owned by the engine's plugin effect.
+ */
+registerValidator(validate: RetentionValidator): () => void
+
+/** Read a detached override for one operation; running operations retain their snapshot.
+ * @returns Only the active retention field, or neither when inheriting engine configuration.
+ */
+current(): Pick<CompactionPolicyConfig, 'retainTokens' | 'retainRatio'>
+```
+
+Source: [`packages/compaction/compaction-basic/src/retention-settings.ts`](../../packages/compaction/compaction-basic/src/retention-settings.ts)
 
 <a id="ctxtoolresultpruner--toolresultpruner"></a>
 

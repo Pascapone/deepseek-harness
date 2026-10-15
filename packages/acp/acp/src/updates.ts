@@ -91,12 +91,14 @@ function usageUpdate(
   event: SessionEvent<'assistant/message'>,
 ): SessionUpdate | undefined {
   if (event.data.usage === undefined) return undefined
-  const size = session.requestContext()?.contextWindow
   const meter = ctx.get('tokenMeter')
-  if (size === undefined || meter === undefined) return undefined
+  if (meter === undefined) return undefined
+  const measurement = meter.measure(session)
+  const size = measurement.contextWindow
+  if (size === undefined) return undefined
   return {
     sessionUpdate: 'usage_update',
-    used: meter.measure(session).totalTokens,
+    used: measurement.inputTokens,
     size,
   }
 }

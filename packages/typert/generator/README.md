@@ -89,6 +89,8 @@ Host and Client are independent TypeScript programs. Direct project references e
 
 [Unary binary results](../protocol/README.md) are recognized after generic type resolution. Their codecs validate the byte-array type and JSON metadata without iterating, copying, or freezing the byte payload; generated Client declarations retain the authored metadata and narrow the byte backing to `ArrayBuffer`.
 
+Generated runtime descriptors retain [authored parameter optionality](../protocol/README.md#exposing-a-host-method) alongside Client declarations.
+
 ### Catalog projection
 
 The runtime type closure indexes exported workspace declarations and referenced framework enums. Vendored declarations stay outside business API discovery; their enums remain available when a public result refers to them.

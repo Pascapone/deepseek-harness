@@ -17,6 +17,8 @@
     { "path": "../ui-primitives" },
     { "path": "../ui-renderer" },
     { "path": "../ui-session" },
+    { "path": "../../llm/token-meter" },
+    { "path": "../../core/session" },
     { "path": "../store" },
     { "path": "../ui-settings/tsconfig.client.json" },
     { "path": "../locale/tsconfig.client.json" },

@@ -105,10 +105,10 @@ function appendSummaryMeter(ctx: Context, session: Session, start: SessionSeqTyp
 describe('contextBreakdown session projection', () => {
   it('serves zeros for an empty log', async () => {
     const { ctx, session } = await harness()
-    expect(projected(ctx, session)).toEqual({ systemTokens: 0, toolsTokens: 0, messageTokens: 0 })
+    expect(projected(ctx, session)).toMatchObject({ systemTokens: 0, toolsTokens: 0, messageTokens: 0, quality: 'estimated', unattributedTokens: 0 })
   })
 
-  it('prices the system node and the newest envelope last-wins and pushes no change for a restated envelope', async () => {
+  it('prices the newest envelope and tracks restated request identities', async () => {
     const { ctx, session } = await harness()
     const systemNode = appendSystem(session, 'You are terse.')
     session.append('request/header', {
@@ -117,7 +117,7 @@ describe('contextBreakdown session projection', () => {
     })
     // 'You are terse.' prices to 8 (4 text + 4 role): the same figure the
     // request envelope's former system field priced to.
-    expect(projected(ctx, session)).toEqual({
+    expect(projected(ctx, session)).toMatchObject({
       systemTokens: 8,
       toolsTokens: estimateToolsTokens({ config: CONFIG, tools: TOOLS }),
       messageTokens: 0,
@@ -129,19 +129,21 @@ describe('contextBreakdown session projection', () => {
       header: { config: CONFIG, tools: TOOLS },
       reason: 'change',
     })
+    expect(changed).toContain('contextBreakdown')
+    changed.length = 0
     session.append('session/end-seed', {})
     expect(changed).not.toContain('contextBreakdown')
 
     // A tool-less envelope prices the tools figure back to zero and leaves
     // the system node's figure alone.
     session.append('request/header', { header: { config: CONFIG }, reason: 'change' })
-    expect(projected(ctx, session)).toEqual({ systemTokens: 8, toolsTokens: 0, messageTokens: 0 })
+    expect(projected(ctx, session)).toMatchObject({ systemTokens: 8, toolsTokens: 0, messageTokens: 0 })
 
     // Replacing node 0 follows the new prompt; an empty prompt records none.
     const longer = replaceSystem(session, systemNode, 'You are terse and answer in one line.')
     expect(projected(ctx, session).systemTokens).toBe(Math.ceil('You are terse and answer in one line.'.length / 4) + 4)
     replaceSystem(session, longer, '')
-    expect(projected(ctx, session)).toEqual({ systemTokens: 0, toolsTokens: 0, messageTokens: 0 })
+    expect(projected(ctx, session)).toMatchObject({ systemTokens: 0, toolsTokens: 0, messageTokens: 0 })
   })
 
   it('keeps the system node out of the message figure across appends and a system replacement', async () => {
@@ -206,7 +208,7 @@ describe('contextBreakdown session projection', () => {
       surfaceOp: { op: 'replace', startSeq: question, endSeq: newest },
       sourceEventSeqs: [question, newest],
     })
-    expect(projected(ctx, session)).toEqual({ systemTokens: 5, toolsTokens: 0, messageTokens: estimateMessage(summary) })
+    expect(projected(ctx, session)).toMatchObject({ systemTokens: 5, toolsTokens: 0, messageTokens: estimateMessage(summary) })
     expect(projected(ctx, session).systemTokens + projected(ctx, session).messageTokens)
       .toBe(ctx.tokenMeter.measure(session).nodes.reduce((sum, node) => sum + node.heuristicTokens, 0))
   })
@@ -376,7 +378,9 @@ describe('contextBreakdown session projection', () => {
       return current
     }
     expect(state().nodes).toHaveLength(26)
-    expect(Object.keys(state().nodes[0]!).sort()).toEqual(['heuristicTokens', 'seq', 'system'])
+    expect(JSON.stringify(state())).not.toContain('the first of many messages')
+    expect(state().nodes[0]).not.toHaveProperty('content')
+    expect(state().nodes[0]).not.toHaveProperty('replayState')
     const shadowed = [...session.surface.nodes]
     session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'summary' }], source: { kind: 'test' },
@@ -393,7 +397,7 @@ describe('contextBreakdown session projection', () => {
     replaceSystem(session, head, 'same')
     const next = definition.apply(state, session.snapshotEvents().at(-1)!)
     expect(next).not.toBe(state)
-    expect(definition.wire.view(next)).toBe(definition.wire.view(state))
+    expect(definition.wire.view(next)).toEqual(definition.wire.view(state))
     expect(state.nodes[0]?.seq).toBe(head)
   })
 
@@ -412,7 +416,7 @@ describe('contextBreakdown session projection', () => {
       ctx.sessionProjections.checkpoint(session),
     )) as ReturnType<typeof ctx.sessionProjections.checkpoint>
     const row = checkpoint['contextBreakdown']!
-    expect(row.ver).toBe(5)
+    expect(row.ver).toBe(6)
     expect(ctx.sessionProjections.viewCheckpoint(checkpoint).contextBreakdown).toEqual(projected(ctx, session))
     const replacement = session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'summary' }], source: { kind: 'user' },
@@ -420,7 +424,7 @@ describe('contextBreakdown session projection', () => {
     const restored = ctx.sessionProjections.restore(
       checkpoint, [replacement], SessionLogOffset(replacement.seq), session.header, session.inheritedEventCount,
     )
-    expect(restored.snapshot.values.contextBreakdown).toEqual({ systemTokens: 5, toolsTokens: 0, messageTokens: 10 })
+    expect(restored.snapshot.values.contextBreakdown).toMatchObject({ systemTokens: 5, toolsTokens: 0, messageTokens: 10 })
     const stale = { ...checkpoint, contextBreakdown: { ...row, ver: 2, val: { systemTokens: 1004, toolsTokens: 0, messageTokens: -989 } } }
     expect(ctx.sessionProjections.viewCheckpoint(stale).contextBreakdown).toBeUndefined()
     expect(ctx.sessionProjections.restoreFloor(stale)).toBe(0)
@@ -431,7 +435,7 @@ describe('contextBreakdown session projection', () => {
       stale, session.snapshotEvents(), SessionLogOffset(0), session.header, session.inheritedEventCount,
     )
     expect(replayed.snapshot.values.contextBreakdown).toEqual(projected(ctx, session))
-    expect(replayed.checkpoint['contextBreakdown']?.ver).toBe(5)
+    expect(replayed.checkpoint['contextBreakdown']?.ver).toBe(6)
     const invalid = {
       ...checkpoint,
       contextBreakdown: {
@@ -461,11 +465,11 @@ describe('contextBreakdown session projection', () => {
       const restored = ctx.sessionProjections.restore(
         checkpoint, session.snapshotEvents(), SessionLogOffset(0), session.header, session.inheritedEventCount,
       )
-      expect(restored.snapshot.values.contextBreakdown).toEqual({
+      expect(restored.snapshot.values.contextBreakdown).toMatchObject({
         systemTokens: 8, toolsTokens: staleValue.toolsTokens, messageTokens: 9,
       })
       expect(restored.checkpoint).toEqual(current)
-      expect(restored.checkpoint['contextBreakdown']?.ver).toBe(5)
+      expect(restored.checkpoint['contextBreakdown']?.ver).toBe(6)
     } finally {
       await ctx.fiber.dispose()
     }
@@ -488,7 +492,7 @@ describe('contextBreakdown session projection', () => {
     expect(ctx.sessionProjections.snapshot(session).values).not.toHaveProperty('contextBreakdown')
 
     await ctx.plugin(TokenMeter)
-    expect(ctx.sessionProjections.viewCheckpoint(checkpoint).contextBreakdown).toEqual({
+    expect(ctx.sessionProjections.viewCheckpoint(checkpoint).contextBreakdown).toMatchObject({
       systemTokens: 8,
       toolsTokens: 0,
       messageTokens: 9,

@@ -12,6 +12,9 @@ export type { ContextBreakdownProjection, ContextPressureProjection, TokenUsageP
 /** Token-meter plugin configuration; the fixed estimator has no settings. */
 export type TokenMeterConfig = Record<string, never>
 
+/** Evidence supporting an input estimate; incomplete costs have no safe upper bound. */
+export type TokenMeasurementQuality = 'observed' | 'usage-supported' | 'estimated' | 'incomplete'
+
 /** The baseline from which a signed surface delta produces current pressure. */
 export type TokenMeasurementBaseline =
   | { readonly kind: 'none'; readonly tokens: 0 }
@@ -26,8 +29,37 @@ export interface TokenMeasurement {
   readonly baseline: TokenMeasurementBaseline
   /** Signed repricing of current surface content relative to the baseline anchor. */
   readonly surfaceDeltaTokens: number
-  /** Non-negative current request-and-response pressure. */
+  /** Compatibility alias for inputTokens; response output is not added. */
   readonly totalTokens: number
+  /** Forecast of the complete next request input, excluding the response reserve. */
+  readonly inputTokens: number
+  /** Evidence quality for the complete forecast. */
+  readonly quality: TokenMeasurementQuality
+  /** Observed input not safely attributable to individual retained nodes. */
+  readonly unattributedTokens: number
+  /** Current estimated tool-schema cost. */
+  readonly toolsTokens: number
+  /** Current estimated effective system cost. */
+  readonly systemTokens: number
+  /** Current estimated non-system surface cost. */
+  readonly messageTokens: number
+  /** Jointly calibrated spans; finer node allocations remain estimates. */
+  readonly groups: readonly { readonly seqs: readonly SessionSeq[]; readonly tokens: number; readonly quality: TokenMeasurementQuality }[]
+  /** Most recent provider input, retaining its route and actual request cut. */
+  readonly lastObservedPrompt?: {
+    readonly tokens: number
+    readonly logOffset: SessionLogOffset
+    readonly provider: string
+    readonly model: string
+    readonly headerSeq?: SessionSeq
+    readonly contextSeq?: SessionSeq
+  }
+  /** Capacity from the same effective route as the forecast. */
+  readonly contextWindow?: number
+  /** Reserved future output, not historical output usage. */
+  readonly outputReserveTokens?: number
+  /** Capacity minus forecast input and reserved output; negative means overflow. */
+  readonly availableTokens?: number
   /** Total route-priced request tokens across the current surface; equals the sum of the node prices. */
   readonly surfaceTokens: number
   /** Current surface nodes in positional head-to-tail order. */
@@ -51,4 +83,10 @@ export interface TokenSurfaceNode {
    * projection fold stays in agreement with its own appends.
    */
   readonly heuristicTokens: number
+  /** Evidence for this node's allocation, not an exact provider tokenization. */
+  readonly quality?: TokenMeasurementQuality
+  /** First node of an inseparable calibrated span, when present. */
+  readonly costGroupStartSeq?: SessionSeq
+  /** Last node of an inseparable calibrated span, when present. */
+  readonly costGroupEndSeq?: SessionSeq
 }

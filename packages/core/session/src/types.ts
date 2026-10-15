@@ -7,6 +7,9 @@ import type {
   LlmCallConfig,
   LlmCallConfigAdapterDefaults,
   LlmFailure,
+  LlmReplayPrice,
+  LlmReplayPricingScope,
+  LlmMessageProjectionPrice,
   SystemMessage,
   SystemPromptUpdate,
   TokenUsage,
@@ -260,6 +263,27 @@ export interface RequestContext {
   contextWindow?: number
   /** `'in-history'` when the route reads the latest `system` message at any position as the effective system prompt. */
   systemPromptUpdate?: SystemPromptUpdate
+  /** Response reserve before input-dependent clamping; may be a conservative native ceiling, absent means unknown. */
+  outputReserve?: number
+  /** Native replay projection identity from the frozen adapter generation. */
+  replayPricing?: LlmReplayPricingScope
+  /** Changed-only assistant hints under replayPricing; a scope change invalidates previous hints. */
+  replayPrices?: readonly LlmReplayPrice[]
+  /** Changed-only message representation receipts under this route and projection scope. */
+  projectionPrices?: readonly LlmMessageProjectionPrice[]
+  /** Estimated declaration cost after historical/deferred tool projection under the captured route policy. */
+  toolProjection?: { readonly tokens: number; readonly mode: 'none' | 'addition-only' | 'in-history' }
+  /** Advisory policy used by the most recent compaction decision, not a restriction on request history. */
+  retention?: { readonly retainTokens: number; readonly retainRatio?: number; readonly source: 'model' | 'settings' | 'config' }
+}
+
+/** Exact immutable Session prefix and request metadata used by one dispatched attempt. */
+export interface RequestDispatch {
+  readonly version: 1
+  /** Exclusive log cut whose projected history supplied the frozen request array. */
+  readonly logOffset: SessionLogOffset
+  readonly headerSeq: SessionSeq
+  readonly contextSeq: SessionSeq
 }
 
 /**
@@ -344,6 +368,10 @@ export interface SessionEventMap {
     message: AssistantMessage
     /** Exact timed model stream, compacted without joining delta boundaries. */
     stream: AssistantStreamRecord[]
+    /** Captured at dispatch, not reconstructed from the surface at settlement. */
+    request?: RequestDispatch
+    /** Own-message hint under the named context's native projection, without replay blobs or usage copies. */
+    replayPrice?: { readonly contextSeq: SessionSeq; readonly price: LlmReplayPrice }
     usage?: TokenUsage
     interrupted?: true
   }
@@ -352,7 +380,7 @@ export interface SessionEventMap {
    * preserves a failed, retried, cancelled, or stream-error attempt that
    * reached settlement without fabricating model-visible history.
    */
-  'assistant/attempt': { turn: number; step: number; stream: AssistantStreamRecord[] }
+  'assistant/attempt': { turn: number; step: number; stream: AssistantStreamRecord[]; request?: RequestDispatch }
   /**
    * The model requested one tool invocation: `name` with the raw `arguments`
    * JSON string exactly as the model produced it (unparsed). `callId` pairs the
@@ -394,8 +422,8 @@ export interface SessionEventMap {
     startsSeries?: true
   }
   /**
-   * Route metadata for the next request, logged only when the route, capacity,
-   * or system prompt update mode changes. It does not participate in request
+   * Route, reserve, policy, and changed-only pricing facts for the next request.
+   * Logged when those facts change. It does not participate in request
    * reconstruction or header equality. Prompt admission uses the bound prepared
    * call's capability, not this snapshot from an earlier request.
    */

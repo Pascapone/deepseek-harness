@@ -4,7 +4,8 @@
  * onboarding stage — and registers everything on the Settings pages that
  * belongs to no single feature: the trigger/header chrome content,
  * local-document action, General section, and `settings` dictionaries.
- * Feature-owned rows and sections stay with their features.
+ * The retention settings companion shares this shell; feature plugins can
+ * contribute additional rows and sections.
  * Export discipline: packages/client/AGENTS.md.
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
@@ -32,6 +33,7 @@ import type { DesktopUpdateBridge } from '../types.ts'
 import { DesktopUpdateSource } from './desktop-update-source.ts'
 import { CloseLabel, HeaderContent, TriggerContent } from './chrome.tsx'
 import { GeneralSection } from './GeneralSection.tsx'
+import { RetentionSection, type RetentionSettings, type RetentionSectionInjected } from './RetentionSection.tsx'
 import { CurrentVersionRow } from './CurrentVersionRow.tsx'
 import { DeveloperToolsRow, type DeveloperToolsRowInjected } from './DeveloperToolsRow.tsx'
 import { SettingsDocumentAction } from './SettingsDocumentAction.tsx'
@@ -98,6 +100,20 @@ export function apply(ctx: ClientContext): void {
   // seat, and the nav label is a thunk the owner resolves per render — no
   // locale/change re-registration wiring.
   const t = ctx.locale.bind(NS)
+  const retention = ctx.configForms.get<RetentionSettings>('compaction-retention')
+  const mountRetention = () => ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section', id: 'context-compaction', order: 30,
+    label: () => t('retention.nav'), locale: NS,
+    inject: (): RetentionSectionInjected => ({
+      hooks: { retention },
+      saveRetention: (value, revision) => retention.mutate([
+        { op: 'set', path: ['retention'], value },
+      ], revision),
+    }),
+  }, RetentionSection))
+  if (ctx.remote.$host.isLoopback) {
+    ctx.effect(() => ctx.configForms.whileServed(['compaction-retention'], mountRetention))
+  } else mountRetention()
   // The shared ConfigForm mirror updates after document commits and reconnects.
   const documentController = ctx.remote.$host.isLoopback
     ? new SettingsDocumentStore(ctx, ctx.configForms.describe())
