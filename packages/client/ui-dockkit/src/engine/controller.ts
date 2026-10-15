@@ -23,6 +23,7 @@ import {
   type OpenContentInput,
 } from './planner.ts'
 import type { Mint } from './planner.ts'
+import { getPane } from './tree.ts'
 import { Sequencer } from './sequence.ts'
 
 export type { OpenContentInput } from './planner.ts'
@@ -151,7 +152,7 @@ export class DockController {
 
   /**
    * Seat the pane-tab factory's tab at the end of a pane's strip.
-   * @param paneId - the docked pane whose strip asked.
+   * @param paneId - the pane whose strip asked.
    * @returns false when there is no factory or the pane is not docked.
    */
   addTab(paneId: PaneId): boolean {
@@ -181,12 +182,21 @@ export class DockController {
   }
 
   /**
-   * Destroy a tab and its content state. A floating host panel goes with it.
+   * Destroy a tab and its content state. A floating pane goes with its final tab.
    * @param tabId - the tab to close.
    */
   closeTab(tabId: TabId): void {
     this.run([{ type: 'closeTab', tabId }])
   }
+
+  /**
+   * Close a complete tab group as one undoable intent.
+   * @param paneId - pane whose tab records are closed.
+   */
+  closePane(paneId: PaneId): void {
+    this.run(getPane(this.state, paneId).tabs.map(tabId => ({ type: 'closeTab', tabId })))
+  }
+
 
   /**
    * Focus a tab, its pane, and raise that pane when it floats.
@@ -217,7 +227,7 @@ export class DockController {
    * Put a tab at an explicit slot: a reorder inside its own pane, otherwise a
    * move (or a return, when it currently floats).
    * @param tabId - the tab being placed.
-   * @param toPaneId - destination docked pane.
+   * @param toPaneId - destination pane.
    * @param index - caret slot in the destination strip, counting the dragged chip when the strip is its own.
    * @returns false when the placement changes nothing.
    */
@@ -249,7 +259,7 @@ export class DockController {
   }
 
   /**
-   * Send a floating panel's tab back into the docked tree.
+   * Send a floating panel's tab group back into the docked tree.
    * @param paneId - the floating pane.
    * @param toPaneId - destination docked pane; defaults to the active one.
    */

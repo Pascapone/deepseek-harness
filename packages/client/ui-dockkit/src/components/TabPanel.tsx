@@ -282,9 +282,18 @@ export function TabStrip({ state, pane, callbacks }: TabPanelProps): ReactNode {
                 // replaced — which would abandon every drag. A drag that ends
                 // elsewhere fires no click, and its own operation carries focus.
                 onPointerDown={(event) => {
-                  // A secondary press is the menu, never a drag.
-                  if (event.button === 2) return
+                  if (event.button !== 0) {
+                    if (event.button === 1) event.preventDefault()
+                    event.stopPropagation()
+                    return
+                  }
                   callbacks.onTabPressed(tabId, event)
+                }}
+                onAuxClick={(event) => {
+                  if (event.button !== 1) return
+                  event.preventDefault()
+                  event.stopPropagation()
+                  callbacks.onTabAuxClick?.(tabId, event.button)
                 }}
                 onClick={(event) => {
                   event.stopPropagation()
@@ -364,8 +373,8 @@ export function TabStrip({ state, pane, callbacks }: TabPanelProps): ReactNode {
         </Tooltip>
       )}
       <div className={css.stripFill} data-dockkit-strip-fill />
-      {callbacks.renderPaneActions?.(pane.id)}
-      {!(callbacks.hideSplitWhenBlocked && block !== undefined) && (
+      {pane.host === 'dock' && callbacks.renderPaneActions?.(pane.id)}
+      {pane.host === 'dock' && !(callbacks.hideSplitWhenBlocked && block !== undefined) && (
         <Tooltip label={block === undefined ? callbacks.labels.splitPane : splitBlockedTitle(callbacks.labels, block)} shortcutKeys={callbacks.labels.splitPaneKeys} side="bottom" delayMs={500}>
           <span
             tabIndex={block === undefined ? undefined : 0}

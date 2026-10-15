@@ -196,22 +196,23 @@ describe('floating panes as planner arguments', () => {
     return { state: applyAll(docked, floated.ops), mint, floatId: floated.paneId, tabId: opened.tabId }
   }
 
-  it('plans nothing into a floating pane: no split, no seeded tab, no drop', () => {
+  it('adds and drops tabs into floats while refusing splits', () => {
     const { state, mint, floatId } = withFloat()
     expect(planSplitPane(state, mint, floatId, seedTab)).toEqual([])
-    expect(planAddTab(state, mint, floatId, seedTab)).toEqual([])
+    expect(planAddTab(state, mint, floatId, seedTab)[0]).toMatchObject({ type: 'openTab', paneId: floatId })
     const seeded = getPane(state, state.rootId).tabs[0]
     if (seeded === undefined) throw new Error('fixture: seeded tab missing')
-    expect(planDropTab(state, mint, seeded, floatId, 'center')).toEqual([])
+    expect(planDropTab(state, mint, seeded, floatId, 'center')[0]).toMatchObject({ type: 'moveTab', tabId: seeded, toPaneId: floatId })
+    expect(planDropTab(state, mint, seeded, floatId, 'left')).toEqual([])
   })
 
-  it('copies a floating tab into the active docked pane, at its end', () => {
-    const { state, mint, tabId } = withFloat()
+  it('copies a floating tab beside itself', () => {
+    const { state, mint, tabId, floatId } = withFloat()
     expect(state.activePaneId).not.toBe(state.rootId)
     expect(activeDockPaneId(state)).toBe(state.rootId)
     const copy = planDuplicateTab(state, mint, tabId)
-    expect(copy.ops[0]).toMatchObject({ type: 'openTab', paneId: state.rootId, index: 1 })
-    expect(getPane(applyAll(state, copy.ops), state.rootId).tabs.at(-1)).toBe(copy.tabId)
+    expect(copy.ops[0]).toMatchObject({ type: 'openTab', paneId: floatId, index: 1 })
+    expect(getPane(applyAll(state, copy.ops), floatId).tabs.at(-1)).toBe(copy.tabId)
   })
 })
 

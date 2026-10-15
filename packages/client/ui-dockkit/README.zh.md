@@ -30,7 +30,7 @@ kind: "package-reference"
 
 **引擎**是纯逻辑——没有 UI 框架、没有 DOM、没有宿主概念。
 
-- 一棵归一化的递归分裂树：按 id 索引的 `nodes`、指向停靠根的 `rootId`、自底向上排列的 `floats`。`PaneId`、`SplitId`、`TabId` 是带 brand 的字符串：只有 `Mint`（或库自己的 DOM 往返）能产出，因此 pane、split、tab 三种 id 彼此不可互换，也不能拿裸字符串充数。浮窗不是第二个概念——它就是 `host` 为 `'float'` 的格，容量一个 tab，绘制时不带 tab 条。
+- 一棵归一化的递归分裂树：按 id 索引的 `nodes`、指向停靠根的 `rootId`、自底向上排列的 `floats`。`PaneId`、`SplitId`、`TabId` 是带 brand 的字符串：只有 `Mint`（或库自己的 DOM 往返）能产出，因此 pane、split、tab 三种 id 彼此不可互换，也不能拿裸字符串充数。浮窗不是第二个概念——它就是 `host` 为 `'float'` 的格，包含有序标签组，并复用标签条。关闭最后一个浮动标签会移除其格；重新停靠会移动完整标签组并保留选中标签。移动标签仅移动该标签。
 - `applyOp(state, op)` 返回下一状态**以及撤销它的操作**。逆操作在操作执行时捕获，因为到撤销时操作前的状态已经不存在了。
 - 每个操作都携带它创建的 id，因此 `replay(initial, ops)` 能复现同一棵树。引擎不读时钟，也不读随机源。
 - `Sequencer` 维护一条线性历史，每个意图一条记录：一次手势或命令产生的操作一起后退、一起前进，连续的纯焦点记录作为一步，后退后的新记录会丢弃前进分支。
@@ -53,6 +53,8 @@ kind: "package-reference"
 | `DockIntents` | 每次手势落定的结果 |
 
 `DockController` 原样满足 `DockIntents`，因此嵌入方可将它交给 `DockLayout` 来保活 Sidebar 布局，或交给 `DockSurface` 来渲染递归分割树。经由自己 store 路由的嵌入方则实现同名方法。有三个 props 承载的是控制策略而非手势：`canSplit`（整面有效，即格预算；用 `splitPaneDisabled` 禁用分栏控件）、`canAddTab(paneId)`（按格，省略添加控件；不传则每格都画）与 `canCloseTab(tabId)`（按 tab，把 chip 的关闭控件和菜单的关闭项一并收起；不传则每个 tab 都可关闭）。隐藏添加控件不会移动 tab 条里的其它任何东西，收起关闭也不会移动 chip 里的任何东西——关闭控件压在标题末端之上而非并排。某格仅剩的一个 chip 在关闭被收起时画成安静样式——没有胶囊底色，没有悬停填充——因为既没有别的 tab 可供选择，也没有任何可对它做的事。套件自己再加一条策略，即下文的空间规则，它用 `splitPaneNarrow` 禁用某格的分栏控件；`onRoom(fits)` 上报其读数，让以编程方式分栏的嵌入方能遵守同一规则。
+
+`DockLayout.externalPaneTargets` 将浮动格 id 映射到外部拥有的元素。完整格框架及其有序内容一起移动，React 所有权保持不变；已访问的浮动标签内容在切换及随后重新停靠时保持挂载。`onPaneElement` 提供当前停靠格或浮动框架元素。移除目标后，格先返回原生文档，随后 `onExternalPaneReleased(paneId, target)` 确认释放。删除格时，也会在移除外部 DOM 后确认释放。嵌入方负责浏览器窗口，并在关闭其文档前等待确认。标签拖动在来源文档中解析目标；弹窗坐标不会命中其他文档中的格。内容浮层从首次渲染起就使用预定目标文档。`onTabAuxClick(tabId, button)` 上报鼠标中键点击且不启动拖动；具体操作由嵌入方决定。`DockIntents.closePane` 允许嵌入方先完成整组清理再移除标签；未提供时，框架通过 `closeTab` 逐一关闭标签。浮动格提供标签、添加、停靠及关闭操作，不支持内部拆分。`revealScope: 'pane'` 将内容复用限制在目标格内；默认值 `'session'` 搜索整个布局。
 
 `dropZones="horizontal"` 提供左右两个半区提示；预算或宽度不允许再拆时，正文整格接收移动。提示是一张内缩 8px 的虚线卡片，显示该落区的图形和 `labels.dropZone[zone]`；预览层覆盖全部 tab 正文，指针所在的卡片取强调色，另一张保持安静的轮廓。`minPaneFraction` 控制预览的最小比例，`planResizeSplit` 接受相同最小值以约束提交；Sidebar 使用 0.2，两个轴都允许反复分栏。通用引擎仍保留原有树与其它分割方向。 `hideSplitWhenBlocked` 在分栏被阻止时（窗格预算已满或格太窄）直接隐藏分栏控件而不是渲染禁用态，默认值为 false。
 

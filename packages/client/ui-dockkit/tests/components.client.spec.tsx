@@ -1386,17 +1386,17 @@ describe('FloatLayer', () => {
     return { intents, paneId, tabId, panel }
   }
 
-  it('draws one panel per floating pane, without a tab strip', () => {
+  it('draws one shared tab strip per floating pane', () => {
     const { intents } = floating()
     expect(screen.getByTestId('float-body').textContent).toBe('a.txt')
-    expect(screen.queryByRole('tablist')).toBeNull()
+    expect(screen.getByRole('tablist')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: TEST_LABELS.dockFloat }))
     expect(intents.unfloatPane).toHaveBeenCalledTimes(1)
   })
 
   it('closes a floating panel through its own control', () => {
     const { intents, tabId } = floating()
-    fireEvent.click(screen.getByRole('button', { name: TEST_LABELS.closeTab }))
+    fireEvent.click(screen.getByRole('button', { name: TEST_LABELS.closeFloat }))
     expect(intents.closeTab).toHaveBeenCalledWith(tabId)
   })
 
@@ -1416,7 +1416,7 @@ describe('FloatLayer', () => {
     fireEvent.pointerDown(panel(lower))
     expect(intents.focusPane).toHaveBeenCalledWith(lower)
     fireEvent.pointerDown(part('data-dockkit-float-dock', lower))
-    fireEvent.pointerDown(part('data-dockkit-float-close', lower))
+    fireEvent.pointerDown(panel(lower).querySelector('[data-dockkit-tab-close]')!)
     fireEvent.pointerDown(part('data-dockkit-float-grip', lower), { clientX: 150, clientY: 90, pointerId: 7, button: 0 })
     fireEvent.pointerDown(part('data-dockkit-float-resize', lower), { clientX: 400, clientY: 280, pointerId: 8, button: 0 })
     expect(intents.focusPane).toHaveBeenCalledTimes(1)

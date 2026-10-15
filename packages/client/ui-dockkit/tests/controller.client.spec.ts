@@ -233,14 +233,15 @@ describe('explicit tab placement', () => {
     expect(getPane(state, paneId).tabs[0]).toBe(tabId)
   })
 
-  it('refuses a floating pane as the destination', () => {
+  it('places a tab in a floating group', () => {
     const { controller } = expanded()
     const first = controller.openContent({ contentId: 'dsh-resource://file/session/s/a.txt', title: 'a.txt', kind: 'text-preview' })
     const second = controller.openContent({ contentId: 'dsh-resource://file/session/s/b.txt', title: 'b.txt', kind: 'text-preview' })
     const floatId = controller.floatTab(first)
     const before = controller.ops.length
-    expect(controller.placeTab(second, floatId, 0)).toBe(false)
-    expect(controller.ops).toHaveLength(before)
+    expect(controller.placeTab(second, floatId, 0)).toBe(true)
+    expect(controller.ops.length).toBeGreaterThan(before)
+    expect(getPane(controller.getSnapshot().state, floatId).tabs).toEqual([second, first])
   })
 })
 
@@ -360,4 +361,29 @@ describe('notification', () => {
     expect(dockPaneCount(controller.getSnapshot().state)).toBe(2)
     expect(controller.redo()).toBe(false)
   })
+})
+
+
+it('scopes content reuse to an explicit floating pane without changing session-wide defaults', () => {
+  const controller = seededController()
+  const original = controller.openContent({ kind: 'file', contentId: 'shared', title: 'Shared' })
+  const other = controller.openContent({ kind: 'file', contentId: 'other', title: 'Other' })
+  const paneId = controller.floatTab(other)
+  const copy = controller.openContent({ kind: 'file', contentId: 'shared', title: 'Shared', paneId, revealScope: 'pane' })
+  expect(copy).not.toBe(original)
+  expect(controller.openContent({ kind: 'file', contentId: 'shared', title: 'Shared', paneId, revealScope: 'pane' })).toBe(copy)
+  expect(controller.openContent({ kind: 'file', contentId: 'shared', title: 'Shared', paneId })).toBe(original)
+})
+
+
+it('closes a floating group as one undoable intent', () => {
+  const controller = seededController()
+  const first = controller.openContent({ kind: 'file', contentId: 'a', title: 'A' })
+  const pane = controller.floatTab(first)
+  controller.openContent({ kind: 'file', contentId: 'b', title: 'B', paneId: pane })
+  const before = controller.getSnapshot().state
+  controller.closePane(pane)
+  expect(controller.getSnapshot().state.nodes[pane]).toBeUndefined()
+  controller.undo()
+  expect(controller.getSnapshot().state).toEqual(before)
 })

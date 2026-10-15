@@ -402,7 +402,7 @@ describe('floating panes', () => {
     }).state
     expect(() => applyOp(floated, {
       type: 'float', tabId: guideTabId, newPaneId: minter.next('float'), rect: { x: 0, y: 0, width: 10, height: 10 },
-    })).toThrow(/docked tab/)
+    })).toThrow(/surviving source pane/)
   })
 })
 
@@ -511,17 +511,21 @@ describe('operations refuse', () => {
     return { state: floated, minter, paneId, secondPaneId: second.newPaneId, floatId, guideTabId, floatTabId: tab.id }
   }
 
-  it('opening or inserting a tab into a floating pane', () => {
+  it('opens and restores tabs in a floating pane', () => {
     const { state, minter, floatId } = mixed()
     const tab = fileTab(minter.next('tab'), 'dsh-resource://file/session/s/b.txt', 'b.txt')
-    expect(() => applyOp(state, { type: 'openTab', paneId: floatId, tab, index: 0 })).toThrow(/docked pane/)
-    expect(() => applyOp(state, { type: 'insertTab', paneId: floatId, tab, index: 0 })).toThrow(/docked pane/)
+    expect(getPane(applyOp(state, { type: 'openTab', paneId: floatId, tab, index: 0 }).state, floatId).tabs[0]).toBe(tab.id)
+    expect(getPane(applyOp(state, { type: 'insertTab', paneId: floatId, tab, index: 0 }).state, floatId).tabs[0]).toBe(tab.id)
   })
 
-  it('moving a tab out of or into a floating pane, which is what unfloat and float are for', () => {
+  it('moves individual tabs across floating and docked panes', () => {
     const { state, paneId, floatId, guideTabId, floatTabId } = mixed()
-    expect(() => applyOp(state, { type: 'moveTab', tabId: floatTabId, toPaneId: paneId, index: 0 })).toThrow(/use unfloat/)
-    expect(() => applyOp(state, { type: 'moveTab', tabId: guideTabId, toPaneId: floatId, index: 0 })).toThrow(/target must be docked/)
+    const moved = applyOp(state, { type: 'moveTab', tabId: floatTabId, toPaneId: paneId, index: 0 })
+    expect(moved.state.nodes[floatId]).toBeUndefined()
+    expect(replay(moved.state, moved.inverse)).toEqual(state)
+    const grouped = applyOp(state, { type: 'moveTab', tabId: guideTabId, toPaneId: floatId, index: 0 })
+    expect(getPane(grouped.state, floatId).tabs).toEqual([guideTabId, floatTabId])
+    expect(replay(grouped.state, grouped.inverse)).toEqual(state)
   })
 
   it('returning a floating tab anywhere but a docked pane, and treating a docked pane as floating', () => {
@@ -625,5 +629,54 @@ describe('replay', () => {
     expect(replay(state, ops)).toEqual(direct)
     expect(replay(state, ops)).toEqual(replay(state, ops))
     expect(findTabPane(direct, preview.id).id).toBe(floatId)
+  })
+})
+
+
+describe('floating tab groups', () => {
+  function group() {
+    const { state, minter, paneId, guideTabId } = fixture()
+    const floatId = minter.next('float')
+    const floated = applyOp(state, { type: 'float', tabId: guideTabId, newPaneId: floatId,
+      rect: { x: 11, y: 22, width: 330, height: 440 } }).state
+    const second = fileTab(minter.next('tab'), 'file:b', 'B')
+    const grouped = applyOp(floated, { type: 'openTab', paneId: floatId, tab: second, index: 1 }).state
+    return { state: grouped, minter, paneId, floatId, first: guideTabId, second: second.id }
+  }
+
+  it('keeps the pane when its originally detached tab closes and restores exact selection on undo', () => {
+    const { state, floatId, first, second } = group()
+    const next = expectRoundTrip(state, { type: 'closeTab', tabId: first })
+    expect(getPane(next, floatId).tabs).toEqual([second])
+    expect(getPane(next, floatId).activeTabId).toBe(second)
+    expect(expectRoundTrip(next, { type: 'closeTab', tabId: second }).nodes[floatId]).toBeUndefined()
+  })
+
+  it('docks and restores ordered groups including selection, rectangle and stacking order', () => {
+    const { state, floatId, paneId, first, second, minter } = group()
+    const focused = applyOp(state, { type: 'focusTab', tabId: first }).state
+    const other = fileTab(minter.next('tab'), 'file:c', 'C')
+    const withOther = applyOp(focused, { type: 'openTab', paneId, tab: other, index: 0 }).state
+    const docked = expectRoundTrip(withOther, { type: 'unfloat', paneId: floatId, toPaneId: paneId, index: 0 })
+    expect(getPane(docked, paneId).tabs).toEqual([first, second, other.id])
+    expect(getPane(docked, paneId).activeTabId).toBe(first)
+    const result = applyOp(withOther, { type: 'unfloat', paneId: floatId, toPaneId: paneId, index: 0 })
+    let restored = result.state
+    const redo: LayoutOp[] = []
+    for (const op of result.inverse) {
+      const undone = applyOp(restored, op)
+      restored = undone.state
+      redo.unshift(...undone.inverse)
+    }
+    expect(replay(restored, redo)).toEqual(docked)
+  })
+
+  it('moves or detaches only the selected group member and restores both groups on undo', () => {
+    const { state, floatId, paneId, first, second, minter } = group()
+    const moved = expectRoundTrip(state, { type: 'moveTab', tabId: first, toPaneId: paneId, index: 0 })
+    expect(getPane(moved, floatId).tabs).toEqual([second])
+    const detached = expectRoundTrip(state, { type: 'float', tabId: second, newPaneId: minter.next('float'),
+      rect: { x: 5, y: 6, width: 300, height: 200 } })
+    expect(getPane(detached, floatId).tabs).toEqual([first])
   })
 })

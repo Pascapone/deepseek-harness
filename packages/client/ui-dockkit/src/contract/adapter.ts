@@ -82,11 +82,13 @@ export interface DockIntents {
   readonly addTab: (paneId: PaneId) => void
   /** Destroy a tab. */
   readonly closeTab: (tabId: TabId) => void
+  /** Close every tab in a pane through the embedding owner's cleanup handlers. */
+  readonly closePane?: (paneId: PaneId) => void
   /** Copy a tab beside itself. No kit control drives this; embedders reach it through their own API. */
   readonly duplicateTab: (tabId: TabId) => void
   /** Float a tab, at `rect` when the release point decided one (a drag released clear of the surface). */
   readonly floatTab: (tabId: TabId, rect?: FloatRect) => void
-  /** Return a floating panel's tab to the docked tree. */
+  /** Return a floating panel's tab group to the docked tree. */
   readonly unfloatPane: (paneId: PaneId) => void
   /**
    * Put a tab at an explicit strip slot: a reorder, a move, or a return. `index`

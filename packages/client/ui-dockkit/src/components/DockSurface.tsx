@@ -58,6 +58,8 @@ export interface DockSurfaceProps {
    * width either way. The menu still opens and carries the embedder's items.
    */
   readonly canCloseTab?: (tabId: TabId) => boolean
+  /** An auxiliary click on a tab; the embedding owner decides its action. */
+  readonly onTabAuxClick?: (tabId: TabId, button: number) => void
   readonly intents: DockIntents
   readonly labels: DockLabels
   readonly renderTab: TabRenderer
@@ -117,14 +119,14 @@ const ALWAYS = (): boolean => true
  * with room for two halves; otherwise the release is not a move at all.
  */
 function hitTest(
-  root: HTMLElement,
+  roots: readonly HTMLElement[],
   x: number,
   y: number,
   canSplit: boolean,
   fits: ReadonlyMap<PaneId, HalvesFit>,
   dropZones: 'edges' | 'horizontal',
 ): DropTarget | undefined {
-  for (const [paneId, pane] of paneElements(root)) {
+  for (const [paneId, pane] of roots.flatMap(root => paneElements(root))) {
     const rect = pane.getBoundingClientRect()
     if (!containsPoint(rect, x, y)) continue
     const strip = pane.querySelector<HTMLElement>('[data-dockkit-strip]')
@@ -132,7 +134,7 @@ function hitTest(
       const tabs = [...strip.querySelectorAll<HTMLElement>('[data-dockkit-tab]')]
       return { kind: 'strip', paneId, index: insertionIndex(tabs.map(tab => tab.getBoundingClientRect()), x) }
     }
-    const zone = dropZones === 'horizontal'
+    const zone = pane.hasAttribute('data-dockkit-float') ? 'center' : dropZones === 'horizontal'
       ? canSplit && fitOf(fits, paneId).row
         ? x < rect.x + rect.width / 2 ? 'left' : 'right'
         : 'center'
@@ -168,9 +170,9 @@ function sameSizes(a: readonly number[], b: readonly number[]): boolean {
 /** The split tree and the gestures over it. */
 function Surface({
   state, canSplit, canSplitColumn, canAddTab, canCloseTab, intents, labels, renderTab, renderTabTitle,
-  renderTabMenuItems, renderPaneActions, chrome, onRoom, draw,
+  renderTabMenuItems, renderPaneActions, chrome, onRoom, draw, externalPaneTargets, onTabAuxClick,
   dropZones = 'edges', minPaneFraction = MIN_PANE_FRACTION, hideSplitWhenBlocked = false,
-}: DockSurfaceProps & { readonly draw: (callbacks: PaneCallbacks, preview: SizePreview | undefined) => ReactNode }): ReactNode {
+}: DockSurfaceProps & Pick<TabRetention, 'externalPaneTargets'> & { readonly draw: (callbacks: PaneCallbacks, preview: SizePreview | undefined) => ReactNode }): ReactNode {
   const surface = useRef<HTMLDivElement | null>(null)
   const [preview, setPreview] = useState<Preview>(NO_PREVIEW)
   const [fits, setFits] = useState(NO_FITS)
@@ -217,11 +219,18 @@ function Surface({
     onSplitPane: intents.splitPane.bind(intents),
     onAddTab: intents.addTab.bind(intents),
     onCloseTab: intents.closeTab.bind(intents),
+    ...onTabAuxClick === undefined ? {} : { onTabAuxClick },
     // A press is not yet a drag: the chip lifts, and the drop preview follows,
     // once the pointer has travelled the threshold. A release before that is a
     // click and reports nothing here.
     onTabPressed: (tabId, event) => {
       withSurface((root) => {
+        const owner = event.currentTarget.ownerDocument
+        const roots = [...state.floats].reverse().flatMap((id) => {
+          const target = externalPaneTargets?.get(id)
+          return target?.ownerDocument === owner ? [target] : []
+        })
+        if (root.ownerDocument === owner) roots.push(root)
         const startX = event.clientX
         const startY = event.clientY
         let dragging = false
@@ -234,14 +243,14 @@ function Surface({
             setPreview({
               ...NO_PREVIEW,
               draggingTabId: tabId,
-              dropTarget: hitTest(root, moved.clientX, moved.clientY, canSplit, fits, dropZones),
+              dropTarget: hitTest(roots, moved.clientX, moved.clientY, canSplit, fits, dropZones),
             })
           },
           up: (released) => {
             if (!dragging) return
-            const target = hitTest(root, released.clientX, released.clientY, canSplit, fits, dropZones)
+            const target = hitTest(roots, released.clientX, released.clientY, canSplit, fits, dropZones)
             if (target === undefined) {
-              if (containsPoint(root.getBoundingClientRect(), released.clientX, released.clientY)) return
+              if (root.ownerDocument !== owner || containsPoint(root.getBoundingClientRect(), released.clientX, released.clientY)) return
               intents.floatTab(tabId, floatRectAt(released.clientX, released.clientY, FLOAT_DEFAULT_SIZE))
               return
             }

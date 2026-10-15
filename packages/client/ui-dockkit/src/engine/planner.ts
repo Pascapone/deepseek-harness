@@ -13,7 +13,7 @@
  * records nothing and notifies nobody.
  */
 import type {
-  DockMode, DockZone, FloatRect, LayoutOp, LayoutState, PaneId, PaneNode, SplitAxis, SplitId, TabId, TabRecord,
+  DockMode, DockZone, FloatRect, LayoutOp, LayoutState, PaneId, SplitAxis, SplitId, TabId, TabRecord,
 } from '../contract/types.ts'
 import { clampSizes, FLOAT_DEFAULT_SIZE, zoneSplit } from './constraints.ts'
 import type { TabFactory } from './initial.ts'
@@ -51,6 +51,8 @@ export interface OpenContentInput {
    * a second one being opened. Defaults to `true`.
    */
   readonly revealIfOpened?: boolean
+  /** Reuse matching content within the target pane or the complete layout (default). */
+  readonly revealScope?: 'pane' | 'session'
 }
 
 /** An intent that both acts and names the tab it settled on. */
@@ -101,11 +103,9 @@ export function activeDockPaneId(state: LayoutState): PaneId {
   return active.host === 'dock' ? active.id : firstDockPaneId(state)
 }
 
-/** Send a tab into a docked pane, choosing the operation its current host needs. */
-function tabInto(source: PaneNode, tabId: TabId, toPaneId: PaneId, index: number): LayoutOp {
-  return source.host === 'float'
-    ? { type: 'unfloat', paneId: source.id, toPaneId, index }
-    : { type: 'moveTab', tabId, toPaneId, index }
+/** Move one tab between panes without moving its siblings. */
+function tabInto(tabId: TabId, toPaneId: PaneId, index: number): LayoutOp {
+  return { type: 'moveTab', tabId, toPaneId, index }
 }
 
 /**
@@ -164,10 +164,10 @@ export function planSplitPane(
 }
 
 /**
- * Seat the embedder's seeded tab at the end of a docked pane's strip.
+ * Seat the embedder's seeded tab at the end of a pane's strip.
  * @param state - current layout.
  * @param mint - id source for the new tab.
- * @param paneId - the pane whose strip asked; must be docked.
+ * @param paneId - the pane whose strip asked.
  * @param makeTab - builds the seeded tab; omit to plan nothing.
  * @returns the operations, or none when there is nothing to seat.
  */
@@ -179,7 +179,6 @@ export function planAddTab(
 ): readonly LayoutOp[] {
   if (makeTab === undefined) return NOTHING
   const pane = getPane(state, paneId)
-  if (pane.host !== 'dock') return NOTHING
   return [{ type: 'openTab', paneId, tab: makeTab(mint('tab')), index: pane.tabs.length }]
 }
 
@@ -191,11 +190,13 @@ export function planAddTab(
  * @returns the operations plus the tab they settle on.
  */
 export function planOpenContent(state: LayoutState, mint: Mint, input: OpenContentInput): PlannedTab {
+  const paneId = input.paneId ?? activeDockPaneId(state)
   const existing = input.revealIfOpened === false
     ? undefined
-    : findContentTab(state, input.contentId, input.kind)
+    : input.revealScope === 'pane'
+      ? findPaneContentTab(state, paneId, input.contentId, input.kind)
+      : findContentTab(state, input.contentId, input.kind)
   if (existing !== undefined) return { ops: [{ type: 'focusTab', tabId: existing }], tabId: existing }
-  const paneId = input.paneId ?? activeDockPaneId(state)
   const tab: TabRecord = {
     id: mint('tab'),
     kind: input.kind,
@@ -218,8 +219,8 @@ export function planOpenContent(state: LayoutState, mint: Mint, input: OpenConte
 export function planDuplicateTab(state: LayoutState, mint: Mint, tabId: TabId): PlannedTab {
   const source = getTab(state, tabId)
   const pane = findTabPane(state, tabId)
-  const host = pane.host === 'dock' ? pane.id : activeDockPaneId(state)
-  const index = pane.host === 'dock' ? pane.tabs.indexOf(tabId) + 1 : getPane(state, host).tabs.length
+  const host = pane.id
+  const index = pane.tabs.indexOf(tabId) + 1
   const tab: TabRecord = { ...source, id: mint('tab') }
   return { ops: [{ type: 'openTab', paneId: host, tab, index }], tabId: tab.id }
 }
@@ -229,7 +230,7 @@ export function planDuplicateTab(state: LayoutState, mint: Mint, tabId: TabId): 
  * move, or a return when it currently floats.
  * @param state - current layout.
  * @param tabId - the tab being placed.
- * @param toPaneId - destination docked pane.
+ * @param toPaneId - destination pane.
  * @param index - caret slot in the destination strip, counted over the chips as
  *   drawn — the dragged chip included when the destination is its own pane, so
  *   the slot just before or just after it is where it already sits.
@@ -242,7 +243,7 @@ export function planPlaceTab(
   index: number,
 ): readonly LayoutOp[] {
   const source = findTabPane(state, tabId)
-  if (getPane(state, toPaneId).host !== 'dock') return NOTHING
+  getPane(state, toPaneId)
   if (source.id === toPaneId) {
     // `reorderTab` indexes the strip without the tab: a caret past the chip
     // counts one slot the chip itself vacates.
@@ -250,7 +251,7 @@ export function planPlaceTab(
     const to = index > from ? index - 1 : index
     return to === from ? NOTHING : [{ type: 'reorderTab', tabId, index: to }]
   }
-  return [tabInto(source, tabId, toPaneId, index)]
+  return [tabInto(tabId, toPaneId, index)]
 }
 
 /**
@@ -278,12 +279,12 @@ export function planDropTab(
 ): readonly LayoutOp[] {
   const source = findTabPane(state, tabId)
   const target = getPane(state, targetPaneId)
-  if (target.host !== 'dock') return NOTHING
+  if (target.host === 'float' && zone !== 'center') return NOTHING
   const split = zoneSplit(zone)
 
   if (split === undefined) {
     if (source.id === targetPaneId) return NOTHING
-    return [tabInto(source, tabId, targetPaneId, target.tabs.length)]
+    return [tabInto(tabId, targetPaneId, target.tabs.length)]
   }
 
   const vacates = source.id === targetPaneId && source.tabs.length === 1
@@ -302,7 +303,7 @@ export function planDropTab(
   if (vacates && makeTab !== undefined) {
     ops.push({ type: 'openTab', paneId: targetPaneId, tab: makeTab(mint('tab')), index: source.tabs.length })
   }
-  ops.push(tabInto(source, tabId, newPaneId, 0))
+  ops.push(tabInto(tabId, newPaneId, 0))
   return ops
 }
 
@@ -320,6 +321,8 @@ export function planFloatTab(
   tabId: TabId,
   rect?: FloatRect,
 ): { readonly ops: readonly LayoutOp[]; readonly paneId: PaneId } {
+  const source = findTabPane(state, tabId)
+  if (source.host === 'float' && source.tabs.length === 1) return { ops: NOTHING, paneId: source.id }
   const step = state.floats.length * FLOAT_CASCADE_STEP
   const newPaneId = mint('float')
   return {
@@ -339,7 +342,7 @@ export function planFloatTab(
 }
 
 /**
- * Send a floating panel's tab back into the docked tree.
+ * Send a floating panel's tab group back into the docked tree.
  * @param state - current layout.
  * @param paneId - the floating pane.
  * @param toPaneId - destination docked pane; defaults to the active one.

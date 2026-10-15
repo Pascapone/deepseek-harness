@@ -864,3 +864,14 @@
 .floatResize:hover::after {
   border-color: var(--dsw-alias-label-tertiary);
 }
+
+.floatTabBody {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+}
+.floatTabBody[hidden] { display: none; }
+
+.floatHeader > [data-dockkit-strip] { flex: 1; min-width: 0; border: 0; }

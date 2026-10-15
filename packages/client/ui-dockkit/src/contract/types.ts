@@ -6,7 +6,7 @@
  * The model is a normalized recursive split tree. `nodes` holds every split and
  * pane keyed by id; `rootId` names the docked root; `floats` lists floating
  * panes bottom-to-top. A floating panel is not a second concept — it is a pane
- * whose `host` is `'float'`, capacity 1 tab, drawn without a tab strip.
+ * whose `host` is `'float'`, with an ordered tab group and one tab strip.
  *
  * Ids are branded: a pane, a split, and a tab id never stand in for one another
  * or for a bare string, and only a mint (or a DOM round trip of an id the kit
@@ -147,11 +147,11 @@ export type LayoutOp =
   }
   /** Drop an empty docked pane and collapse the split it leaves behind. */
   | { readonly type: 'merge'; readonly paneId: PaneId }
-  /** Add a new tab to a docked pane and focus it. */
+  /** Add a new tab to a pane and focus it. */
   | { readonly type: 'openTab'; readonly paneId: PaneId; readonly tab: TabRecord; readonly index: number }
-  /** Destroy a tab and its content state; a floating host pane goes with it. */
+  /** Destroy a tab and its content state; its floating pane goes with the final tab. */
   | { readonly type: 'closeTab'; readonly tabId: TabId }
-  /** Move a tab to a different docked pane. */
+  /** Move a tab to a different pane. */
   | { readonly type: 'moveTab'; readonly tabId: TabId; readonly toPaneId: PaneId; readonly index: number }
   /** Move a tab within its own pane. */
   | { readonly type: 'reorderTab'; readonly tabId: TabId; readonly index: number }
@@ -161,10 +161,12 @@ export type LayoutOp =
   | { readonly type: 'focusPane'; readonly paneId: PaneId }
   /** Net result of a divider drag. */
   | { readonly type: 'resize'; readonly splitId: SplitId; readonly sizes: readonly number[] }
-  /** Take a tab out of the docked tree into a new floating pane. */
+  /** Take a tab into a new floating pane; a floating source must retain a sibling. */
   | { readonly type: 'float'; readonly tabId: TabId; readonly newPaneId: PaneId; readonly rect: FloatRect }
-  /** Return a floating pane's only tab to a docked pane and destroy the floating pane. */
+  /** Return a floating pane's ordered tab group to a docked pane. */
   | { readonly type: 'unfloat'; readonly paneId: PaneId; readonly toPaneId: PaneId; readonly index: number }
+  /** Restore a complete floating group after docking, preserving pane identity and z order. */
+  | { readonly type: 'restoreFloat'; readonly pane: PaneNode; readonly fromPaneId: PaneId; readonly index: number }
   /** Net result of dragging a floating pane; the pane is focused and raised with it. */
   | { readonly type: 'moveFloat'; readonly paneId: PaneId; readonly x: number; readonly y: number }
   /** Net result of resizing a floating pane; the pane is focused and raised with it. */
@@ -180,7 +182,7 @@ export type LayoutOp =
     readonly tabs: readonly TabRecord[]
     readonly attach: PaneAttachment
   }
-  /** Put one tab record back into a docked pane. */
+  /** Put one tab record back into a pane. */
   | { readonly type: 'insertTab'; readonly paneId: PaneId; readonly tab: TabRecord; readonly index: number }
   /** Restore focus facts an operation displaced. */
   | {

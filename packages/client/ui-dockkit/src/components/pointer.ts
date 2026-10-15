@@ -38,14 +38,14 @@ export function capturePointer(element: HTMLElement, pointerId: number): void {
  */
 export function followPointer(element: HTMLElement, pointerId: number, followers: PointerFollowers): () => void {
   capturePointer(element, pointerId)
-  const controller = new AbortController()
+  const view = element.ownerDocument.defaultView ?? window
+  const controller = new view.AbortController()
   const { signal } = controller
   element.dataset.dockkitPointer = String(pointerId)
   signal.addEventListener('abort', () => {
     if (element.dataset.dockkitPointer === String(pointerId)) delete element.dataset.dockkitPointer
   }, { once: true })
   const own = (event: PointerEvent): boolean => event.pointerId === pointerId
-  const view = element.ownerDocument.defaultView ?? window
   view.addEventListener('pointermove', (event) => { if (own(event)) followers.move(event) }, { signal })
   view.addEventListener('pointerup', (event) => {
     if (!own(event)) return

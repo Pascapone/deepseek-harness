@@ -12,7 +12,7 @@ import type {
 } from '../contract/types.ts'
 import {
   assertNever, entriesOf, findParent, findTabPane, firstDockPaneId, floatIndex, floatRect, getPane, getSplit, getTab,
-  insertAt, keysOf, neighbourTabId, normalizeSizes, onlyTabId, paneWithTabs, removeAt, replaceInParent, withNodes, withTabs,
+  insertAt, keysOf, neighbourTabId, normalizeSizes, paneWithTabs, removeAt, replaceInParent, withNodes, withTabs,
 } from './tree.ts'
 
 /** Capture the focus facts of `paneIds` plus global focus, as the operation that restores them. */
@@ -144,17 +144,16 @@ function applyMerge(state: LayoutState, op: Extract<LayoutOp, { type: 'merge' }>
   }
 }
 
-/** Add a new tab to a docked pane and focus it. */
+/** Add a new tab and focus its pane. */
 function applyOpenTab(state: LayoutState, op: Extract<LayoutOp, { type: 'openTab' }>): ApplyResult {
   const pane = getPane(state, op.paneId)
-  if (pane.host !== 'dock') throw new Error('layout: openTab requires a docked pane')
   assertFreeTab(state, op.tab.id)
   const focus = focusSnapshot(state, [pane.id])
   const seated = withNodes(withTabs(state, { [op.tab.id]: op.tab }), {
     [pane.id]: paneWithTabs(pane, insertAt(pane.tabs, op.index, op.tab.id), op.tab.id),
   })
   return {
-    state: { ...seated, activePaneId: pane.id },
+    state: { ...seated, activePaneId: pane.id, floats: pane.host === 'float' ? raise(seated.floats, pane.id) : seated.floats },
     inverse: [{ type: 'closeTab', tabId: op.tab.id }, focus],
   }
 }
@@ -162,7 +161,6 @@ function applyOpenTab(state: LayoutState, op: Extract<LayoutOp, { type: 'openTab
 /** Put one tab record back where it was, without stealing focus. */
 function applyInsertTab(state: LayoutState, op: Extract<LayoutOp, { type: 'insertTab' }>): ApplyResult {
   const pane = getPane(state, op.paneId)
-  if (pane.host !== 'dock') throw new Error('layout: insertTab requires a docked pane')
   assertFreeTab(state, op.tab.id)
   const focus = focusSnapshot(state, [pane.id])
   const tabs = insertAt(pane.tabs, op.index, op.tab.id)
@@ -174,14 +172,14 @@ function applyInsertTab(state: LayoutState, op: Extract<LayoutOp, { type: 'inser
   }
 }
 
-/** Destroy a tab and its content state; a floating host pane goes with its only tab. */
+/** Destroy a tab; remove its floating pane only when the final tab closes. */
 function applyCloseTab(state: LayoutState, op: Extract<LayoutOp, { type: 'closeTab' }>): ApplyResult {
   const tab = getTab(state, op.tabId)
   const pane = findTabPane(state, op.tabId)
   const index = pane.tabs.indexOf(op.tabId)
   const focus = focusSnapshot(state, [pane.id])
 
-  if (pane.host === 'float') {
+  if (pane.host === 'float' && pane.tabs.length === 1) {
     const index = floatIndex(state, pane.id)
     const dropped = withTabs(
       withNodes({ ...state, floats: removeAt(state.floats, index) }, { [pane.id]: null }),
@@ -209,7 +207,7 @@ function applyCloseTab(state: LayoutState, op: Extract<LayoutOp, { type: 'closeT
 /**
  * Put a pane back, with the tab records it owned. A docked pane returns empty
  * (its tabs return through `insertTab`, as `closeTab` records them); a floating
- * pane returns with its one tab, or empty.
+ * pane returns with its complete tab group, or empty.
  */
 function applyInsertPane(state: LayoutState, op: Extract<LayoutOp, { type: 'insertPane' }>): ApplyResult {
   assertFreeNode(state, op.pane.id)
@@ -223,7 +221,7 @@ function applyInsertPane(state: LayoutState, op: Extract<LayoutOp, { type: 'inse
   const restoredTab = op.tabs[0]
   const inverse: LayoutOp[] = restoredTab === undefined
     ? [{ type: 'merge', paneId: op.pane.id }]
-    : [{ type: 'closeTab', tabId: restoredTab.id }, focusSnapshot(state, [])]
+    : [...op.tabs.map(tab => ({ type: 'closeTab' as const, tabId: tab.id })), focusSnapshot(state, [])]
 
   const attach = op.attach
   switch (attach.mode) {
@@ -267,12 +265,10 @@ function applyInsertPane(state: LayoutState, op: Extract<LayoutOp, { type: 'inse
   }
 }
 
-/** Move a tab to a different docked pane and focus it there. */
+/** Move one tab between panes, removing an emptied floating source. */
 function applyMoveTab(state: LayoutState, op: Extract<LayoutOp, { type: 'moveTab' }>): ApplyResult {
   const from = findTabPane(state, op.tabId)
-  if (from.host !== 'dock') throw new Error('layout: moveTab source must be docked; use unfloat')
   const to = getPane(state, op.toPaneId)
-  if (to.host !== 'dock') throw new Error('layout: moveTab target must be docked')
   if (to.id === from.id) throw new Error('layout: moveTab across one pane; use reorderTab')
   const index = from.tabs.indexOf(op.tabId)
   const focus = focusSnapshot(state, [from.id, to.id])
@@ -281,9 +277,14 @@ function applyMoveTab(state: LayoutState, op: Extract<LayoutOp, { type: 'moveTab
     [from.id]: paneWithTabs(from, removeAt(from.tabs, index), activeTabId),
     [to.id]: paneWithTabs(to, insertAt(to.tabs, op.index, op.tabId), op.tabId),
   })
+  const emptied = from.host === 'float' && from.tabs.length === 1
+  const next = emptied ? withNodes({ ...moved, floats: moved.floats.filter(id => id !== from.id) }, { [from.id]: null }) : moved
   return {
-    state: { ...moved, activePaneId: to.id },
-    inverse: [{ type: 'moveTab', tabId: op.tabId, toPaneId: from.id, index }, focus],
+    state: { ...next, activePaneId: to.id, floats: to.host === 'float' ? raise(next.floats, to.id) : next.floats },
+    inverse: [
+      ...(emptied ? [{ type: 'insertPane' as const, pane: paneWithTabs(from, [], undefined), tabs: [], attach: { mode: 'float' as const, index: floatIndex(state, from.id) } }] : []),
+      { type: 'moveTab', tabId: op.tabId, toPaneId: from.id, index }, focus,
+    ],
   }
 }
 
@@ -330,7 +331,7 @@ function applyResize(state: LayoutState, op: Extract<LayoutOp, { type: 'resize' 
 function applyFloat(state: LayoutState, op: Extract<LayoutOp, { type: 'float' }>): ApplyResult {
   getTab(state, op.tabId)
   const from = findTabPane(state, op.tabId)
-  if (from.host !== 'dock') throw new Error('layout: float requires a docked tab')
+  if (from.host === 'float' && from.tabs.length === 1) throw new Error('layout: float requires a tab with a surviving source pane')
   assertFreeNode(state, op.newPaneId)
   const index = from.tabs.indexOf(op.tabId)
   const focus = focusSnapshot(state, [from.id])
@@ -348,26 +349,41 @@ function applyFloat(state: LayoutState, op: Extract<LayoutOp, { type: 'float' }>
   })
   return {
     state: { ...floated, floats: [...floated.floats, op.newPaneId], activePaneId: op.newPaneId },
-    inverse: [{ type: 'unfloat', paneId: op.newPaneId, toPaneId: from.id, index }, focus],
+    inverse: [{ type: 'moveTab', tabId: op.tabId, toPaneId: from.id, index }, focus],
   }
 }
 
-/** Return a floating pane's only tab to a docked pane and destroy the floating pane. */
+/** Dock the complete ordered floating group, retaining its selected tab. */
 function applyUnfloat(state: LayoutState, op: Extract<LayoutOp, { type: 'unfloat' }>): ApplyResult {
   const pane = getPane(state, op.paneId)
-  const rect = floatRect(pane)
-  const tabId = onlyTabId(pane)
+  floatRect(pane)
   const to = getPane(state, op.toPaneId)
   if (to.host !== 'dock') throw new Error('layout: unfloat target must be docked')
   const focus = focusSnapshot(state, [to.id])
-  const docked = withNodes({ ...state, floats: removeAt(state.floats, floatIndex(state, op.paneId)) }, {
-    [op.paneId]: null,
-    [to.id]: paneWithTabs(to, insertAt(to.tabs, op.index, tabId), tabId),
+  const tabs = [...to.tabs.slice(0, op.index), ...pane.tabs, ...to.tabs.slice(op.index)]
+  const docked = withNodes({ ...state, floats: state.floats.filter(id => id !== pane.id) }, {
+    [pane.id]: null,
+    [to.id]: paneWithTabs(to, tabs, pane.activeTabId ?? to.activeTabId),
   })
   return {
     state: { ...docked, activePaneId: to.id },
-    inverse: [{ type: 'float', tabId, newPaneId: op.paneId, rect }, focus],
+    inverse: [{ type: 'restoreFloat', pane, fromPaneId: to.id, index: floatIndex(state, pane.id) }, focus],
   }
+}
+
+/** Recreate a docked group's original floating pane without destroying its tabs. */
+function applyRestoreFloat(state: LayoutState, op: Extract<LayoutOp, { type: 'restoreFloat' }>): ApplyResult {
+  assertFreeNode(state, op.pane.id)
+  const from = getPane(state, op.fromPaneId)
+  const first = op.pane.tabs[0]
+  const index = first === undefined ? 0 : from.tabs.indexOf(first)
+  const focus = focusSnapshot(state, [from.id])
+  const tabs = from.tabs.filter(id => !op.pane.tabs.includes(id))
+  const restored = withNodes({ ...state, floats: insertAt(state.floats, op.index, op.pane.id) }, {
+    [from.id]: paneWithTabs(from, tabs, from.activeTabId !== undefined && tabs.includes(from.activeTabId) ? from.activeTabId : tabs[0]),
+    [op.pane.id]: op.pane,
+  })
+  return { state: restored, inverse: [{ type: 'unfloat', paneId: op.pane.id, toPaneId: from.id, index }, focus] }
 }
 
 /** Give a floating pane a new rectangle, focus it, and raise it: the one operation a drag of it records. */
@@ -435,6 +451,7 @@ export function applyOp(state: LayoutState, op: LayoutOp): ApplyResult {
     case 'resize': return applyResize(state, op)
     case 'float': return applyFloat(state, op)
     case 'unfloat': return applyUnfloat(state, op)
+    case 'restoreFloat': return applyRestoreFloat(state, op)
     case 'moveFloat': return applyMoveFloat(state, op)
     case 'resizeFloat': return applyResizeFloat(state, op)
     case 'setExpanded':

@@ -74,7 +74,7 @@ it('keeps body ancestors through pane moves, floating, raising and docking', () 
   const tab = controller.openContent({ kind: 'file', contentId: 'file:a', title: 'A' })
   const h = mounted(controller, { keepMounted: () => true })
   const body = h.body(tab)
-  const host = body.closest('[data-dockkit-host]')!
+  const host = body.closest('[data-dockkit-content]')!
   act(() => { controller.splitPane(); h.redraw() })
   expect(h.view.container.querySelectorAll('[data-dockkit-pane]')).toHaveLength(2)
   const state = controller.getSnapshot().state
@@ -99,11 +99,11 @@ it('keeps body ancestors through pane moves, floating, raising and docking', () 
   expect(controller.getSnapshot().state.activePaneId).toBe(getPane(state, split.children[0]!).id)
   act(() => { controller.placeTab(tab, secondPane, 0); h.redraw() })
   expect(h.body(tab)).toBe(body)
-  expect(body.closest('[data-dockkit-host]')).toBe(host)
+  expect(body.closest('[data-dockkit-content]')).toBe(host)
   act(() => { controller.floatTab(tab); h.redraw() })
   const floating = controller.getSnapshot().state.floats[0]!
-  expect(body.closest('[data-dockkit-host]')).toBe(host)
-  expect(host.getAttribute('data-dockkit-host')).toBe('float')
+  expect(body.closest('[data-dockkit-content]')).toBe(host)
+  expect(host.closest('[data-dockkit-float]')).not.toBeNull()
   act(() => { controller.setExpanded(false); h.redraw() })
   expect(body.closest('[data-dockkit-content]')?.getAttribute('aria-hidden')).toBeNull()
   fireEvent.pointerDown(h.node(`[data-dockkit-float="${floating}"]`), { pointerId: 1, button: 0 })
@@ -115,7 +115,7 @@ it('keeps body ancestors through pane moves, floating, raising and docking', () 
   fireEvent.pointerUp(window, { pointerId: 2, clientX: 540, clientY: 440 })
   act(() => { h.redraw(); controller.unfloatPane(floating); h.redraw() })
   expect(h.body(tab)).toBe(body)
-  expect(body.closest('[data-dockkit-host]')).toBe(host)
+  expect(body.closest('[data-dockkit-content]')).toBe(host)
 })
 
 it('unmounts unretained bodies and restores focus to their replacement strip', () => {
@@ -174,7 +174,7 @@ it('does not require a docked strip when a selected tab becomes floating in the 
     h.redraw()
   })
   fireEvent.click(h.node(`[data-dockkit-tab="${second}"]`))
-  expect(h.node(`[data-dockkit-content="${second}"]`).hasAttribute('data-dockkit-float')).toBe(true)
+  expect(h.node(`[data-dockkit-content="${second}"]`).closest('[data-dockkit-float]')).not.toBeNull()
 })
 
 it.each(['row', 'column'] as const)('renders stable tab cells across a %s split and an orthogonal split', (axis) => {
@@ -214,4 +214,66 @@ it('keeps a superseding gesture marker when an older follower detaches', () => {
   expect(element.dataset.dockkitPointer).toBe('2')
   second()
   expect(element.dataset.dockkitPointer).toBeUndefined()
+})
+
+
+it('keeps one floating strip and stable draft bodies when switching, closing the original and docking the group', () => {
+  const controller = seededController()
+  controller.setExpanded(true)
+  const first = controller.openContent({ kind: 'file', contentId: 'a', title: 'A' })
+  const paneId = controller.floatTab(first)
+  const second = controller.openContent({ kind: 'file', contentId: 'b', title: 'B', paneId })
+  const h = mounted(controller, { keepMounted: () => true })
+  const shell = h.node(`[data-dockkit-float="${paneId}"]`)
+  expect(shell.querySelectorAll('[data-dockkit-strip]')).toHaveLength(1)
+  expect(shell.querySelectorAll('[data-dockkit-split-button]')).toHaveLength(0)
+  expect(shell.querySelectorAll('[aria-selected="true"]')).toHaveLength(1)
+  const draft = h.body(second) as HTMLInputElement
+  draft.value = 'unsaved draft'
+  fireEvent.click(shell.querySelector(`[data-dockkit-tab="${first}"]`)!)
+  expect(h.body(second)).toBe(draft)
+  expect(draft.closest('[data-dockkit-content]')).toHaveProperty('hidden', true)
+  fireEvent.click(shell.querySelector(`[data-dockkit-tab="${second}"]`)!)
+  expect(h.body(second)).toBe(draft)
+  expect(draft.value).toBe('unsaved draft')
+  act(() => { controller.closeTab(first); h.redraw() })
+  expect(h.node(`[data-dockkit-float="${paneId}"]`)).toBe(shell)
+  expect(h.body(second)).toBe(draft)
+  draft.focus()
+  act(() => { controller.unfloatPane(paneId); h.redraw() })
+  expect(h.body(second)).toBe(draft)
+  expect(document.activeElement).toBe(draft)
+})
+
+it('moves the complete pane to an external document and acknowledges release after every body has returned', () => {
+  const controller = seededController()
+  controller.setExpanded(true)
+  const first = controller.openContent({ kind: 'file', contentId: 'a', title: 'A' })
+  const paneId = controller.floatTab(first)
+  const second = controller.openContent({ kind: 'file', contentId: 'b', title: 'B', paneId })
+  const iframe = document.createElement('iframe')
+  document.body.append(iframe)
+  const destination = iframe.contentDocument!.body
+  const released = vi.fn(() => {
+    expect(destination.querySelector('[data-dockkit-float]')).toBeNull()
+    expect(document.querySelector(`[data-dockkit-content="${second}"]`)).not.toBeNull()
+  })
+  const elements = vi.fn()
+  const h = mounted(controller, { keepMounted: () => true, onExternalPaneReleased: released, onPaneElement: elements })
+  const draft = h.body(second) as HTMLInputElement
+  draft.value = 'survives adoption'
+  const shell = h.node(`[data-dockkit-float="${paneId}"]`)
+  act(() => { h.redraw({ externalPaneTargets: new Map([[paneId, destination]]) }) })
+  expect(destination.querySelector('[data-dockkit-float]')).toBe(shell)
+  expect(destination.querySelector(`[data-body="${second}"]`)).toBe(draft)
+  expect(destination.querySelectorAll('[data-dockkit-strip]')).toHaveLength(1)
+  expect(elements).toHaveBeenCalledWith(paneId, shell)
+  fireEvent.click(destination.querySelector(`[data-dockkit-tab="${first}"]`)!)
+  fireEvent.click(destination.querySelector(`[data-dockkit-tab="${second}"]`)!)
+  expect(destination.querySelector(`[data-body="${second}"]`)).toBe(draft)
+  act(() => { h.redraw({ externalPaneTargets: new Map() }) })
+  expect(released).toHaveBeenCalledExactlyOnceWith(paneId, destination)
+  expect(h.body(second)).toBe(draft)
+  expect(draft.value).toBe('survives adoption')
+  iframe.remove()
 })
