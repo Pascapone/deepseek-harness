@@ -161,12 +161,30 @@ describe('ui-sidebar-browser apply', () => {
     expect(h.registry.catalog.getSnapshot()).toEqual([])
   })
 
-  it('hides browser tabs and shortcuts only from Web clients of the Desktop Host', async () => {
-    vi.stubGlobal('__DSH_NATIVE_BROWSER_HOST__', true)
+  it.each([undefined, 0])('requires a matching Desktop bridge when configured (protocol %s)', async (protocolVersion) => {
+    vi.stubGlobal('__DSH_SIDEBAR_BROWSER_CONFIG__', { requireDesktopBridge: true })
+    if (protocolVersion !== undefined) vi.stubGlobal('dshDesktop', { protocolVersion, browser: {} })
     const h = await boot('macos', 'web')
     expect(h.tabs.get(BROWSER_KIND)).toBeUndefined()
     expect(h.registered).toEqual([])
     expect(h.registry.catalog.getSnapshot()).toEqual([])
+    expect(h.dictionaries.size).toBe(0)
+  })
+
+  it.each([false, true])('retains the native Desktop browser with requireDesktopBridge=%s', async (requireDesktopBridge) => {
+    vi.stubGlobal('__DSH_SIDEBAR_BROWSER_CONFIG__', { requireDesktopBridge })
+    vi.stubGlobal('dshDesktop', { protocolVersion: 1, browser: {} })
+    const h = await boot()
+    expect(h.tabs.get(BROWSER_KIND)?.keepMounted).toBe(true)
+    expect(h.tabs.get(BROWSER_KIND)?.guide).toHaveLength(1)
+    expect(h.registry.catalog.getSnapshot()).toHaveLength(1)
+  })
+
+  it('retains Web registration with an explicit false preference', async () => {
+    vi.stubGlobal('__DSH_SIDEBAR_BROWSER_CONFIG__', { requireDesktopBridge: false })
+    const h = await boot('macos', 'web')
+    expect(h.tabs.get(BROWSER_KIND)?.keepMounted).toBe(false)
+    expect(h.registry.catalog.getSnapshot()).toHaveLength(1)
   })
 
   it('publishes the macOS Web Browser default', async () => {

@@ -33,14 +33,18 @@ Browser 在 Web profile 中默认禁用，在 Desktop 中默认启用。Web 用�
 
 ### 最小配置
 
-本包没有插件配置字段。Web profile 通过其 profile patch 启用随附条目：
+`requireDesktopBridge` 默认为 `false`：启用的 Browser 条目在存在受支持的 Desktop bridge 时使用 Electron，否则保留 Web iframe。设为 `true` 后，缺少该 bridge 的 Client 不注册 Browser tab、开始页入口或快捷键。这项注册策略不改变 Guest 权限。Web profile 通过其 profile patch 启用随附条目：
 
 ```yaml
 - id: ui-sidebar-browser
   disabled: false
+  config:
+    requireDesktopBridge: false
 ```
 
 Client 插件可以调用 `ctx.sidebarRight.openTab('browser', { params: { url } })` 打开 tab。可选 URL 会在导航前接受与地址栏输入相同的校验。
+
+Profile 和 bundle 配置在 Client 重新加载后生效。卸载 MCP provider 不会重置这项独立配置；移除其 bundle patch 或显式设置 `requireDesktopBridge: false` 才会恢复 iframe 回退。已禁用的 Browser 条目仍然禁用。
 
 命令 `browser.new` 在焦点停靠分栏打开独立浏览器页，替换开始页并保留已有内容页。从聊天区或浮动内容页触发时，使用活动停靠分栏。桌面默认键在 macOS 上为 Cmd+T，在 Windows 上为 Ctrl+T；Windows 和 macOS Web 使用[快捷键服务的平台默认值](../shortcuts/README.zh.md)；Linux Web 默认不绑定此命令。开始页按钮使用蓝色地球图标，并在按钮内显示有效快捷键，不额外弹出重复提示。
 

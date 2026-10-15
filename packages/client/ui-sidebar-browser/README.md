@@ -33,14 +33,18 @@ Choose Browser for a Web page that should remain beside the current Session. Cho
 
 ### Minimal configuration
 
-The package has no plugin configuration. A Web profile enables the shipped entry through its profile patch:
+`requireDesktopBridge` defaults to `false`: an enabled Browser entry uses Electron when the supported Desktop bridge is present and otherwise retains the Web iframe. Set it to `true` to omit Browser tabs, guide entries and shortcuts from Clients without that bridge. This registration policy does not change Guest permissions. A Web profile enables the shipped entry through its profile patch:
 
 ```yaml
 - id: ui-sidebar-browser
   disabled: false
+  config:
+    requireDesktopBridge: false
 ```
 
 Client plugins can open a tab through `ctx.sidebarRight.openTab('browser', { params: { url } })`. The optional URL passes the same validation as address-bar input before navigation.
+
+Profile and bundle changes take effect on Client reload. Unloading an MCP provider does not reset this separately configured policy; remove its bundle patch or explicitly set `requireDesktopBridge: false` to restore the iframe fallback. A disabled Browser entry stays disabled.
 
 The `browser.new` command opens a separate Browser page in the focused dock pane, replacing a guide and retaining existing content pages. From the conversation or a floating content page, it uses the active dock pane. Desktop defaults to Cmd+T on macOS and Ctrl+T on Windows; Windows and macOS Web use the [shortcut service’s platform defaults](../shortcuts/README.md); Linux Web leaves the command unbound. The guide button uses a blue globe and displays the effective shortcut inline without a duplicate tooltip.
 

@@ -18,6 +18,7 @@ import type { BrowserPageFactory } from './browser/BrowserPage.ts'
 import { BROWSER_ID, browserDefinition } from './definition.tsx'
 import { en, zh } from './locales.ts'
 import { createBrowserStore } from './browser/store.ts'
+import { Config } from '../config.ts'
 
 export type { BrowserBodyProps } from './view/BrowserBody.tsx'
 export type { BrowserControllerState, BrowserInjected, BrowserMountRequest } from './browser/BrowserController.ts'
@@ -41,11 +42,12 @@ export const inject = ['slots', 'locale', 'sidebarRight', 'sidebarRightTabs']
 
 /** Register the Browser type, localized guide entry, body, and title. */
 export function apply(ctx: Context): void {
+  const config = Config((globalThis as { __DSH_SIDEBAR_BROWSER_CONFIG__?: unknown }).__DSH_SIDEBAR_BROWSER_CONFIG__ ?? {})
   const carrier = (globalThis as typeof globalThis & {
     dshDesktop?: { readonly protocolVersion: number; readonly browser?: DesktopBrowserBridge }
   }).dshDesktop
   const desktop = carrier?.protocolVersion === 1 ? carrier.browser : undefined
-  if ((globalThis as typeof globalThis & { __DSH_NATIVE_BROWSER_HOST__?: boolean }).__DSH_NATIVE_BROWSER_HOST__ && !desktop) return
+  if (config.requireDesktopBridge && !desktop) return
   const namespace = 'sidebarBrowser'
   const t = ctx.locale.bind(namespace)
   ctx.inject(['shortcuts'], (ctx) => {
