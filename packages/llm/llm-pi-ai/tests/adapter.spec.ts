@@ -86,7 +86,7 @@ describe('PiAiAdapter provider routing', () => {
     })
     expect(result.message.content).toEqual([{ type: 'text', text: 'hello' }])
     expect(result.finish).toEqual({ kind: 'stop' })
-    expect(result.usage).toEqual({ inputTokens: 3, outputTokens: 1, totalTokens: 4 })
+    expect(result.usage).toEqual({ inputTokens: 3, outputTokens: 1, totalTokens: 4, reasoningTokens: 0 })
     expect(server.paths).toEqual(['/chat/completions'])
   })
 
@@ -315,6 +315,14 @@ describe('PiAiAdapter provider routing', () => {
     await ctx.plugin(LateAttachmentStore)
     await ctx.plugin(MappedFileSystem)
 
+    const prepared = await ctx.llm.prepareCall({ provider: 'openai', model: 'gpt-4.1' })
+    const retainedPrice = prepared.imagePricing?.priceImages([{ type: 'image', attachment: ref }])[0]
+    const offloadedPrice = prepared.imagePricing?.priceImages([{ type: 'image', attachment: ref, offloaded: true }])[0]
+    expect(retainedPrice?.visualTokens).toBeGreaterThan(0)
+    expect(retainedPrice?.text).toContain(MODEL_IMAGE_PATH)
+    expect(offloadedPrice?.visualTokens).toBe(0)
+    expect(offloadedPrice?.text).toContain(MODEL_IMAGE_PATH)
+
     const result = await assemble(ctx, {
       provider: 'openai',
       model: 'gpt-4.1',
@@ -331,6 +339,7 @@ describe('PiAiAdapter provider routing', () => {
       maxBytes: 1024 * 1024,
     }, expect.any(AbortSignal))
     expect(JSON.stringify(server.requests[0])).toContain(MODEL_IMAGE_PATH)
+    expect(JSON.stringify(server.requests[0])).toContain(JSON.stringify(retainedPrice!.text))
     expect(server.paths).toEqual(['/v1/responses'])
   })
 

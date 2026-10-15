@@ -34,7 +34,7 @@ const breakdownSchema = z.object({
  */
 export const contextBreakdownProjectionDefinition = {
   key: 'contextBreakdown',
-  stateVersion: 6,
+  stateVersion: 7,
   stateSchema: accountingStateSchema,
   init: initAccounting,
   apply: foldAccounting,

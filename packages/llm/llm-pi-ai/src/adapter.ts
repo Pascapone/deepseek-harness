@@ -47,6 +47,7 @@ import {
 import type {
   GenerateOptions,
   ImageAttachmentAccess,
+  LlmImageRequestPricing,
   LlmModelInfo,
   LlmProviderInfo,
   LlmResolvedModelInfo,
@@ -63,6 +64,7 @@ import { toPiContext } from './context.ts'
 import { createModels, getSupportedThinkingLevels } from './models.ts'
 import { toStreamChunks } from './stream.ts'
 import { piOutputReserve, piReplayRequestPricing } from './replay-pricing.ts'
+import { piImageRequestPricing } from './image-pricing.ts'
 
 /** One resolution's frozen view: the profiles and the collection built from them. */
 interface PiAiSnapshot {
@@ -324,6 +326,7 @@ export class PiAiAdapter extends LlmAdapter {
     return Promise.resolve({
       model: this.modelInfo(snapshot, provider, model),
       replayPricing: piReplayRequestPricing(nativeModel),
+      imagePricing: this.imagePricing(snapshot, provider, model),
       outputReserve: config => piOutputReserve(nativeModel, config.maxTokens,
         resolveReasoningLevel(nativeModel, config.reasoningEffort ?? profile.reasoning), profile.thinkingBudgets),
       stream: options => this.streamWithSnapshot(options, snapshot),
@@ -332,6 +335,19 @@ export class PiAiAdapter extends LlmAdapter {
 
   override replayRequestPricing(provider: string, model: string): LlmReplayRequestPricing {
     return piReplayRequestPricing(this.modelOf(this.current(), provider, model))
+  }
+
+  override imageRequestPricing(provider: string, model: string): LlmImageRequestPricing {
+    return this.imagePricing(this.current(), provider, model)
+  }
+
+  private imagePricing(snapshot: PiAiSnapshot, provider: string, model: string): LlmImageRequestPricing {
+    const native = this.modelOf(snapshot, provider, model)
+    const profile = this.profileOf(snapshot, provider)
+    return piImageRequestPricing(native.input.includes('image'), profile.requestImagePixelBudget, (ref) => {
+      const attachments = this.config.resolveAttachments?.()
+      return attachments === undefined ? undefined : this.config.resolveImageAccess?.(attachments, ref)
+    })
   }
 
   stream(options: GenerateOptions): AsyncIterable<StreamChunk> {

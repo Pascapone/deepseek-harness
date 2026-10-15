@@ -156,7 +156,7 @@ export const tokenUsageProjectionDefinition = {
  */
 export const contextPressureProjectionDefinition = {
   key: 'contextPressure',
-  stateVersion: 6,
+  stateVersion: 7,
   stateSchema: accountingStateSchema,
   init: initAccounting,
   apply: foldAccounting,

@@ -390,9 +390,21 @@ export function foldAccounting(state: AccountingState, event: SessionEvent): Acc
     }
     change = { seq: event.seq, frame: state.frame, groups: state.groups, start, added: 1, removed }
     const retained = new Set(nodes.map(node => node.seq))
+    const original = removed[0]
+    const textPrune = event.type === 'tool/result' && removed.length === 1
+      && original !== undefined && original.messageId === node.messageId
+      && state.claim?.start === original.seq && state.claim.end === original.seq
+      && original.images.length === 0 && original.fileCount === 0
+      && message?.content.every(block => block.type === 'text') === true
     groups = groups.flatMap((group) => {
       const seqs = group.seqs.filter(id => retained.has(id))
       if (seqs.length === 0) return []
+      if (textPrune && group.seqs.includes(original.seq)) {
+        // Keep the entire old price: no unknown share of a joint observation is subtracted.
+        return [{ seqs: group.seqs.map(id => id === original.seq ? node.seq : id),
+          tokens: group.tokens + nodePrice(node, frame).tokens,
+          quality: group.quality === 'incomplete' ? 'incomplete' as const : 'estimated' as const }]
+      }
       // A partial replacement cannot prove which share of a joint observation disappeared.
       return [{ ...group, seqs, quality: seqs.length === group.seqs.length ? group.quality : 'incomplete' as const }]
     })

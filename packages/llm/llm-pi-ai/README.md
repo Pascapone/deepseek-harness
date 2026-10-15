@@ -215,6 +215,8 @@ Recorded response content appends to the next request and does not invalidate it
 
 <a id="known-limitations-and-deferred-work"></a>
 
+- Prepared calls and runtime image pricing capture the route's image capability and pixel budget. Each retained occurrence uses pi-ai's pinned visual-token estimate plus its request-handle text; offloaded occurrences and text-only routes count only their actual placeholder text. Visual costs remain estimates rather than provider token measurements.
+
 
 These limits define where the adapter stops and future work begins. They are current package constraints, not a general pi-ai comparison or a task backlog.
 

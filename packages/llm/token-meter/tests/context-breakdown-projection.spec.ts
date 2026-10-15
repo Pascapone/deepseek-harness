@@ -401,7 +401,7 @@ describe('contextBreakdown session projection', () => {
     expect(state.nodes[0]?.seq).toBe(head)
   })
 
-  it('replays late registration, resumes a compact checkpoint, and discards scalar version 2', async () => {
+  it('replays late registration, resumes a compact checkpoint, and discards version 6', async () => {
     const ctx = new Context()
     contexts.push(ctx)
     await ctx.plugin(SessionStore)
@@ -416,7 +416,7 @@ describe('contextBreakdown session projection', () => {
       ctx.sessionProjections.checkpoint(session),
     )) as ReturnType<typeof ctx.sessionProjections.checkpoint>
     const row = checkpoint['contextBreakdown']!
-    expect(row.ver).toBe(6)
+    expect(row.ver).toBe(7)
     expect(ctx.sessionProjections.viewCheckpoint(checkpoint).contextBreakdown).toEqual(projected(ctx, session))
     const replacement = session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'summary' }], source: { kind: 'user' },
@@ -425,7 +425,7 @@ describe('contextBreakdown session projection', () => {
       checkpoint, [replacement], SessionLogOffset(replacement.seq), session.header, session.inheritedEventCount,
     )
     expect(restored.snapshot.values.contextBreakdown).toMatchObject({ systemTokens: 5, toolsTokens: 0, messageTokens: 10 })
-    const stale = { ...checkpoint, contextBreakdown: { ...row, ver: 2, val: { systemTokens: 1004, toolsTokens: 0, messageTokens: -989 } } }
+    const stale = { ...checkpoint, contextBreakdown: { ...row, ver: 6, val: { systemTokens: 1004, toolsTokens: 0, messageTokens: -989 } } }
     expect(ctx.sessionProjections.viewCheckpoint(stale).contextBreakdown).toBeUndefined()
     expect(ctx.sessionProjections.restoreFloor(stale)).toBe(0)
     expect(() => ctx.sessionProjections.restore(
@@ -435,7 +435,7 @@ describe('contextBreakdown session projection', () => {
       stale, session.snapshotEvents(), SessionLogOffset(0), session.header, session.inheritedEventCount,
     )
     expect(replayed.snapshot.values.contextBreakdown).toEqual(projected(ctx, session))
-    expect(replayed.checkpoint['contextBreakdown']?.ver).toBe(6)
+    expect(replayed.checkpoint['contextBreakdown']?.ver).toBe(7)
     const invalid = {
       ...checkpoint,
       contextBreakdown: {
@@ -469,7 +469,7 @@ describe('contextBreakdown session projection', () => {
         systemTokens: 8, toolsTokens: staleValue.toolsTokens, messageTokens: 9,
       })
       expect(restored.checkpoint).toEqual(current)
-      expect(restored.checkpoint['contextBreakdown']?.ver).toBe(6)
+      expect(restored.checkpoint['contextBreakdown']?.ver).toBe(7)
     } finally {
       await ctx.fiber.dispose()
     }

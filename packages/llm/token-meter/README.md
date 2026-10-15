@@ -35,6 +35,8 @@ Mount `@deepseek-ai/dsh-token-meter` with the required `sessionProjections` serv
 
 Observed prompt input is `inputTokens + cacheReadTokens + cacheWriteTokens` for the referenced actual dispatch cut, not the surface at assistant commit. Historical inputs are never summed for pressure. Eligible native replay may use its own stored output usage as a hint; reasoning is already included, and missing usage is explicitly incomplete. Comparable request differences calibrate whole changed spans. Their finer node allocation remains estimated, and selectors must preserve complete `groups` rather than split a jointly observed span.
 
+A logged text-only tool prune keeps its replacement in the original joint cost group, retaining the full old group price plus the replacement estimate. No unobserved share is subtracted. Unknown groups stay incomplete. Pressure and breakdown caches rebuild from the unchanged log when their accounting version changes.
+
 ### Session projections
 
 `tokenUsage` sums disjoint billing buckets per settled attempt, replacing duplicate same-attempt samples without double-counting reasoning. `llm/retry-started` separates billed attempts. `contextPressure` publishes the shared input forecast, evidence quality, matching capacity, output reserve, and latest historical input with its route. The legacy `pressureTokens` alias exists only while that observation matches the forecast calibration. Unloading removes all three registrations.

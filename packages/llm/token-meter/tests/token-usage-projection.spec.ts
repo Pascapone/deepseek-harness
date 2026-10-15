@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { createMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { TokenUsage } from '@deepseek-ai/dsh-llm'
-import SessionStore from '@deepseek-ai/dsh-session'
+import SessionStore, { SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { Session, SessionSeq } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
@@ -450,7 +450,15 @@ describe('contextPressure session projection', () => {
     const checkpoint = JSON.parse(JSON.stringify(
       ctx.sessionProjections.checkpoint(session),
     )) as ReturnType<typeof ctx.sessionProjections.checkpoint>
-    expect(checkpoint.contextPressure?.ver).toBe(6)
+    expect(checkpoint.contextPressure?.ver).toBe(7)
+    const stale = { ...checkpoint, contextPressure: { ...checkpoint.contextPressure!, ver: 6 } }
+    expect(ctx.sessionProjections.viewCheckpoint(stale)).not.toHaveProperty('contextPressure')
+    expect(ctx.sessionProjections.restoreFloor(stale)).toBe(0)
+    const rebuilt = ctx.sessionProjections.restore(
+      stale, session.snapshotEvents(), SessionLogOffset(0), session.header, session.inheritedEventCount,
+    )
+    expect(rebuilt.checkpoint.contextPressure?.ver).toBe(7)
+    expect(rebuilt.snapshot.values.contextPressure).toEqual(ctx.sessionProjections.snapshot(session).values.contextPressure)
 
     await meterFiber.dispose()
     expect(ctx.sessionProjections.snapshot(session).values).not.toHaveProperty('contextPressure')

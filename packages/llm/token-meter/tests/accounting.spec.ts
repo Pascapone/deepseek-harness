@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { createAssistantMessage, createUserMessage, LlmAdapter, LlmRuntime } from '@deepseek-ai/dsh-llm'
+import { createAssistantMessage, createToolResultMessage, createUserMessage, LlmAdapter, LlmRuntime, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, LlmReplayRequestPricing, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { RequestContext, RequestDispatch } from '@deepseek-ai/dsh-session'
@@ -189,6 +189,32 @@ describe('shared request-cut accounting', () => {
     expect(after.groups).toEqual([{ seqs: [answer.seq, image.seq], tokens: 4010, quality: 'estimated' }])
   })
 
+  it('materializes missing image receipts for an old session and replays its offloaded placeholder', () => {
+    const { ctx, meter, session } = harness()
+    const image = session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{
+      type: 'image', attachment: { attachmentId: AttachmentId(`sha256:${'a'.repeat(64)}`),
+        mediaType: 'image/png', bytes: 100, width: 10, height: 10 },
+    }] }), { surfaceOp: 'append' })
+    request(session, 1)
+    expect(agree(ctx, meter, session).nodes[0]?.quality).toBe('incomplete')
+    const replayRequestPricing = ctx.llm.replayRequestPricing('controlled', 'opaque')
+    if (replayRequestPricing === undefined) throw new Error('missing controlled pricing')
+    const imageRequestPricing = { priceImages: (images: readonly { offloaded?: boolean }[]) => images.map(block => ({
+      visualTokens: block.offloaded === true ? 0 : 1200, text: block.offloaded === true ? 'omitted' : 'handle',
+    })) }
+    meter.refresh(session, undefined, { replayRequestPricing, imageRequestPricing, toolUpdate: undefined, outputReserve: 500 })
+    expect(agree(ctx, meter, session).nodes[0]?.quality).toBe('estimated')
+    const revision = session.seq
+    meter.refresh(session, undefined, { replayRequestPricing, imageRequestPricing, toolUpdate: undefined, outputReserve: 500 })
+    expect(session.seq).toBe(revision)
+    session.append('image/offload', { targets: [{ seq: image.seq, imageIndexes: [0] }] })
+    const after = agree(ctx, meter, session)
+    expect(after.nodes[0]?.tokens).toBe(meter.estimateMessage(createUserMessage({
+      source: { kind: 'user' }, content: [{ type: 'text', text: 'omitted' }],
+    })))
+    expect(after.nodes[0]?.quality).toBe('estimated')
+  })
+
   it('prices a tiny visible answer with eligible native O, never sums historical P or reasoning twice', () => {
     const { ctx, meter, session } = harness()
     const question = user(session)
@@ -243,6 +269,39 @@ describe('shared request-cut accounting', () => {
     expect(measured.inputTokens).toBe(6030)
     expect(measured.quality).toBe('incomplete')
     expect(measured.groups).toEqual([{ seqs: [tail.seq], tokens: 4010, quality: 'incomplete' }])
+  })
+
+  it('keeps text-pruned joint groups complete without subtracting an unobserved share, including repeated pruning and cold replay', () => {
+    const { ctx, meter, session } = harness()
+    user(session)
+    const answer = settle(session, request(session, 1), 1, { inputTokens: 10, outputTokens: 4000 })
+    let tool = session.append('tool/result', { turn: 1, step: 1, message: createToolResultMessage({
+      callId: ToolCallId('pruned-result'), isError: false, content: [{ type: 'text', text: 'x'.repeat(4000) }],
+    }) }, { surfaceOp: 'append' })
+    const tail = user(session, 'retained tail')
+    settle(session, request(session, 2), 2, { inputTokens: 5018, outputTokens: 2000 })
+    const before = agree(ctx, meter, session)
+    const originalCost = before.groups[0]!.tokens
+    let retainedCost = originalCost
+    for (const characters of [400, 40]) {
+      session.append('compaction/prune', { shadowedRange: { start: tool.seq, end: tool.seq },
+        shadowedSeqs: [tool.seq], shadowedTokenCount: meter.estimateMessage(tool.data.message) })
+      tool = session.append('tool/result', { ...tool.data,
+        message: { ...tool.data.message, content: [{ type: 'text', text: 'x'.repeat(characters) }] },
+      }, { surfaceOp: { op: 'replace', startSeq: tool.seq, endSeq: tool.seq }, sourceEventSeqs: [tool.seq] })
+      retainedCost += meter.estimateMessage(tool.data.message)
+      const measured = agree(ctx, meter, session)
+      expect(measured.groups).toEqual([{ seqs: [answer.seq, tool.seq, tail.seq], tokens: retainedCost, quality: 'estimated' }])
+      expect(measured.nodes.find(node => node.seq === tail.seq)).toMatchObject({
+        costGroupStartSeq: answer.seq, costGroupEndSeq: tail.seq,
+      })
+      expect(measured.nodes.some(node => node.quality === 'incomplete')).toBe(false)
+      expect(measured.inputTokens).toBeGreaterThanOrEqual(before.inputTokens)
+    }
+    session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'checkpoint' }] }), {
+      surfaceOp: { op: 'replace', startSeq: answer.seq, endSeq: tail.seq }, sourceEventSeqs: [answer.seq, tool.seq, tail.seq],
+    })
+    expect(agree(ctx, meter, session).groups).toEqual([])
   })
 
   it('keeps missing native usage incomplete and materializes old logs only on explicit refresh', () => {
