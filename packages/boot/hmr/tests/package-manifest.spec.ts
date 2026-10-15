@@ -252,6 +252,21 @@ function outcome(run: () => unknown): unknown {
 }
 
 describe('package manifest reader parity', { concurrent: false }, () => {
+  it('preserves the native null prototype of nearest package data after invalidation', () => {
+    const f = fixture()
+    file(f.manifest, JSON.stringify({ name: 'pkg', type: 'module' }))
+    const source = join(f.dir, 'a.mjs')
+    const initial = reader.getNearestParentPackageJSON(source)
+    expect(initial).toBeDefined()
+    expect(Object.getPrototypeOf(initial!.data)).toBeNull()
+
+    f.manifests.invalidate(f.manifest)
+    const refreshed = reader.getNearestParentPackageJSON(source)
+    expect(refreshed).toBeDefined()
+    expect(Object.getPrototypeOf(refreshed!.data)).toBeNull()
+    expect(refreshed!.data).toStrictEqual(initial!.data)
+  })
+
   it('terminates scope lookup after invalidating the filesystem root without modifying it', async () => {
     const f = fixture()
     const child = spawn(process.execPath, [
