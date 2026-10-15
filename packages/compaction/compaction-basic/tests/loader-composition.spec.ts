@@ -100,7 +100,7 @@ describe('real Loader composition', () => {
     await context.plugin(SessionProjectionRegistry)
     await expect(context.plugin(TokenMeter, {
       contextWindow: 4096,
-    } as never)).rejects.toThrow(/TokenMeterConfig: unknown key "contextWindow"/)
+    })).rejects.toThrow(/TokenMeterConfig: unknown key "contextWindow"/)
   })
 
   it('rejects stale compaction-basic config after Schemastery normalization', async () => {
