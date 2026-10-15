@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Use `dsh-tool-fs-search` to give models `glob` file discovery and `grep` content search over a local workspace. Searches need no host `rg` installation or filesystem provider, return workdir-relative results, and include hidden files while excluding VCS metadata. Unfiltered workspace-wide `glob` scans (`*` or `**/*`) respect ignore files to avoid scanning dependencies and build outputs; narrower patterns and a specific `path` still search ignored files. Configurable caps bound inline output; with an optional spill store, capped results remain fully recoverable. Choose the sibling `dsh-tool-fs` package for reading, writing, or editing files.
+Use `dsh-tool-fs-search` to give models `glob` file discovery and `grep` content search over a local workspace. Searches need no host `rg` installation or filesystem provider, return workdir-relative results, and include hidden files while excluding VCS metadata. Ignored files are included by default; deployments can explicitly choose ignore-aware unfiltered root scans. Configurable caps bound inline output; with an optional spill store, capped results remain fully recoverable. Choose the sibling `dsh-tool-fs` package for reading, writing, or editing files.
 
 ## Table of Contents
 
@@ -45,14 +45,14 @@ A subprocess backend, then the tools; the spill backend is optional and makes ca
 
 | Tool | Arguments | Behavior |
 |---|---|---|
-| `glob` | `pattern`, `path?` | Finds files whose paths match a glob pattern, including hidden and ignored files but excluding VCS metadata; unfiltered root scans (`*` or `**/*`) respect ignore files to avoid dependency trees, while narrower patterns and a specific `path` still search ignored files; a pattern with no `/` matches basenames at any depth; complete results stay modification-time ordered |
+| `glob` | `pattern`, `path?` | Finds files whose paths match a glob pattern, including hidden and ignored files but excluding VCS metadata; the configured `respect` policy makes unfiltered root scans honor ignore files, while specific patterns and subtrees still include ignored files; a pattern with no `/` matches basenames at any depth; complete results stay modification-time ordered |
 | `grep` | `pattern`, `path?`, `include?` | Searches file contents with a ripgrep regex and returns matches grouped by file as `Line N: <preview>`; `include` is one positive glob filter, with comma-separated lists and negated values rejected up front |
 
 Routine budgets stay out of the model-facing schema: a model that needs surrounding context reads the matched file with `read`, and one that needs later results follows the returned spill locator's retrieval hint.
 
 ### Configuration
 
-`sampleOverCapGlobResults` is required; the remaining keys are optional search caps with the defaults below.
+`sampleOverCapGlobResults` is required; the remaining keys are optional policies and search caps with the defaults below.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -67,6 +67,8 @@ Routine budgets stay out of the model-facing schema: a model that needs surround
 | `searchMetaMaxBytes` | `65536` | Max bytes of one search's serialized `presentationMeta`; trailing groups/paths drop past it |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-tool-fs-search) is the exhaustive source for every accepted field and its JSDoc.
+
+`globRootIgnorePolicy` defaults to `include`, preserving discovery of ignored files. Deployments can choose `respect` for unfiltered workspace-root scans (`*` or `**/*`, with no path or `.`). Specific patterns and explicit subtrees still include ignored files. The tool description reports the selected policy. Remove the deployment override to restore native behavior.
 
 ### Deployment requirement
 

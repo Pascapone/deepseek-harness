@@ -75,6 +75,8 @@ export interface Config {
   sampleOverCapGlobResults: boolean
   /** Max paths one `glob` call retains inline; later paths go to the formatted spill file. */
   globMaxResults?: number
+  /** Ignore-file handling for unfiltered workspace-root scans; specific patterns/subtrees always include ignored files. */
+  globRootIgnorePolicy?: 'include' | 'respect'
   /** Max flat matches one `grep` call retains inline; later matches go to the formatted spill file. */
   grepMaxMatches?: number
   /** Max bytes retained for one matched-line preview (the cut preserves UTF-8 boundaries). */
@@ -96,6 +98,7 @@ export interface Config {
 
 export const Config: z<Config> = z.object({
   sampleOverCapGlobResults: z.boolean().required(),
+  globRootIgnorePolicy: z.union(['include', 'respect']).default('include'),
   globMaxResults: z.number().default(GLOB_MAX_RESULTS),
   grepMaxMatches: z.number().default(GREP_MAX_MATCHES),
   grepMaxLineBytes: z.number().default(GREP_MAX_LINE_BYTES),
@@ -141,6 +144,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   assertPositiveInteger('timeoutMs', resolved.timeoutMs)
   applyGlobTool(ctx, {
     sampleOverCapGlobResults: resolved.sampleOverCapGlobResults,
+    rootIgnorePolicy: resolved.globRootIgnorePolicy,
     maxResults: resolved.globMaxResults,
     maxMetaBytes: resolved.searchMetaMaxBytes,
     rawOutputMaxBytes: resolved.rawOutputMaxBytes,

@@ -40,6 +40,8 @@ export const GLOB_VCS_EXCLUDES: readonly string[] = ['.git', '.svn', '.hg', '.bz
 export interface GlobToolCaps {
   /** Whether over-cap pages are sampled across top-level entries instead of taking the modification-time head. */
   sampleOverCapGlobResults: boolean
+  /** Whether unfiltered workspace-root scans honor ignore files. Defaults to include. */
+  rootIgnorePolicy?: 'include' | 'respect'
   /** Max paths retained inline; later paths go to the formatted spill file. */
   maxResults: number
   /** Max bytes of serialized `presentationMeta`; trailing paths drop past it. */
@@ -80,16 +82,16 @@ export function parseGlobArgs(args: { pattern: string; path?: string }): GlobInp
  * is a plain argv element — no shell layer exists, so no quoting applies; the
  * search root rides behind `--` so a leading-dash path can never be parsed as
  * a flag. `--sort=modified` orders by modification time. Unfiltered root
- * scans (bare and recursive star patterns) honor ignore files to avoid dependency/build trees;
+ * scans (bare and recursive star patterns) honor ignore files only under the explicit respect policy;
  * narrower patterns and explicit subtrees include ignored files. Hidden files
  * remain visible, while {@link GLOB_VCS_EXCLUDES} keeps VCS metadata out.
  *
  * @param input - the validated arguments.
+ * @param rootIgnorePolicy - deployment choice; include preserves native discovery.
  * @returns the complete ripgrep argument vector (excluding the binary itself).
  */
-export function buildGlobCommand(input: GlobInput): string[] {
-  // ponytail: filtered globs still scan ignored trees; add a second-pass matcher only if those searches also overflow.
-  const unfilteredRoot = (input.pattern === '*' || input.pattern === '**/*') && (input.path === undefined || input.path === '.')
+export function buildGlobCommand(input: GlobInput, rootIgnorePolicy: 'include' | 'respect' = 'include'): string[] {
+  const unfilteredRoot = rootIgnorePolicy === 'respect' && (input.pattern === '*' || input.pattern === '**/*') && (input.path === undefined || input.path === '.')
   const parts = [
     '--files',
     ...unfilteredRoot ? [] : [`--glob=${input.pattern}`],
@@ -308,7 +310,8 @@ export function applyGlobTool(ctx: Context, caps: GlobToolCaps): void {
   const overCapDescription = caps.sampleOverCapGlobResults ? 'is sampled across top-level entries' : 'keeps the first paths'
   const tool = defineTool({
     name: 'glob',
-    description: 'Find files, not directories, whose paths match a glob pattern, including hidden and ignored files. Unfiltered root scans (* or **/*) respect ignore files to avoid dependency trees; pass a specific directory in path to include ignored files there. '
+    description: 'Find files, not directories, whose paths match a glob pattern, including hidden and ignored files. '
+      + (caps.rootIgnorePolicy === 'respect' ? 'Unfiltered root scans (* or **/*) respect ignore files to avoid dependency trees; pass a specific directory in path to include ignored files there. ' : '')
       + `Returns up to ${caps.maxResults} paths in modification-time order; a larger result ${overCapDescription} `
       + 'and reports where the complete list was saved.',
     parameters: {
@@ -338,7 +341,7 @@ export function applyGlobTool(ctx: Context, caps: GlobToolCaps): void {
     },
     async execute(args, exec) {
       const input = parseGlobArgs(args)
-      const run = await runRipgrep(ctx, exec, 'glob', buildGlobCommand(input), caps.rawOutputMaxBytes, caps.graceMs, caps.stderrMaxBytes)
+      const run = await runRipgrep(ctx, exec, 'glob', buildGlobCommand(input, caps.rootIgnorePolicy), caps.rawOutputMaxBytes, caps.graceMs, caps.stderrMaxBytes)
       const root = input.path === undefined ? '.' : toWorkdirRelative(input.path, run.workdir)
       if (run.noMatches) return { root, paths: [] }
 

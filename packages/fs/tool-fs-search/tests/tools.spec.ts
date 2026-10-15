@@ -357,9 +357,32 @@ describe('command construction (plain argv)', () => {
       '--', 'docs dir'])
   })
 
+  it('glob: descriptions report the resolved deployment policy', async () => {
+    const native = await setup()
+    const custom = await setup({ config: { globRootIgnorePolicy: 'respect' } })
+    expect({
+      native: native.ctx.tools.get('glob')?.description,
+      respect: custom.ctx.tools.get('glob')?.description,
+    }).toMatchInlineSnapshot(`
+      {
+        "native": "Find files, not directories, whose paths match a glob pattern, including hidden and ignored files. Returns up to 100 paths in modification-time order; a larger result is sampled across top-level entries and reports where the complete list was saved.",
+        "respect": "Find files, not directories, whose paths match a glob pattern, including hidden and ignored files. Unfiltered root scans (* or **/*) respect ignore files to avoid dependency trees; pass a specific directory in path to include ignored files there. Returns up to 100 paths in modification-time order; a larger result is sampled across top-level entries and reports where the complete list was saved.",
+      }
+    `)
+  })
+
+  it('glob: native defaults and explicit include keep ignored files in broad scans', () => {
+    for (const args of [{ pattern: '*' }, { pattern: '**/*', path: '.' }]) {
+      expect(buildGlobCommand(args)).toContain('--no-ignore')
+      expect(buildGlobCommand(args, 'include')).toContain(`--glob=${args.pattern}`)
+    }
+    expect(buildGlobCommand({ pattern: '**/*.ts' }, 'respect')).toContain('--no-ignore')
+    expect(buildGlobCommand({ pattern: '*', path: 'node_modules' }, 'respect')).toContain('--no-ignore')
+  })
+
   it('glob: unfiltered root scans respect ignore files', () => {
     for (const args of [{ pattern: '*' }, { pattern: '**/*', path: '.' }]) {
-      const command = buildGlobCommand(args)
+      const command = buildGlobCommand(args, 'respect')
       expect(command).not.toContain('--no-ignore')
       expect(command.some(part => part.startsWith('--glob='))).toBe(true) // VCS exclusions still apply.
       expect(command).not.toContain(`--glob=${args.pattern}`)
