@@ -94,11 +94,19 @@ tab 类型分两阶段注册，随包发布的引导类型走的正是别的包�
 
 `preferNewPane: true` 会先按普通的格内空间规则尝试分割目标停靠格，无法分栏时回退到该格。`replaceTab` 优先并会禁用这项偏好。
 
-`close(tabId)` 关闭一个 tab；`active()` 读取活动 tab。`isExpanded()` 与 `toggleExpanded()` 读取并驱动该列的展开；`toggleFullscreen(target)` 对捕获的停靠分栏执行面板控件的显示模式操作。布局操作供以编程方式安排该列的调用方使用，每个都像它替代的手势一样被记录：`focus(tabId)` 聚焦一个 tab 及其格；`split(paneId?, axis?)` 在与 tab 条控件相同的格内空间规则下向右（默认 `'row'`）或向下（`'column'`）分栏一个停靠格（默认活跃格），返回新格的 id，做不到时返回 `undefined`——且不记录任何东西；`float(tabId, rect?)` 把停靠 tab 浮出为浮窗；`dock(paneId)` 把浮窗放回活跃停靠格。不存在的 tab 或格、或已处于调用目标状态的，都原样不动。该接口只暴露操作：没有布局快照、没有操作日志、没有按地址查找。`_undo()` / `_redo()` 步进屏幕上停靠面的历史；它们是 `@internal`——序列没有面向用户的控件，这两个只为测试存在。命令通过屏幕上会话已采用的 store 作用于该会话；没有会话在屏幕上、或运行时尚未创建它的 store 时，命令 throw，而不是写进一个没人绘制的面里。`mounted` 是「屏幕上的会话」的可观察值：Conversation 占据主栏时为选中的会话，全局面板替代它或没有选中会话时为 `undefined`。插件从会话选择与 `ctx.layout.panelInfo` 推导它，它在 React 渲染引起变化的那次更新之前就已改变，因此同一次提交里渲染的组件读到的是到来的会话，并可以在自己的 effect 里对它行动：框架在同一轮渲染里渲染该会话的席位，席位随之创建它的 store。席位从不发布它；每个席位只上报它渲染时依据的事实：停靠套件测得的空间，`split` 与 `preferNewPane` 把它用于该会话的分栏（未测量的分栏视为有空间）；以及框架宽度是否让面板自动全屏，全屏命令据此执行。计划审阅的自动打开通过绑定的 hook 读取 `mounted`。
+`close(tabId)` 关闭一个 tab；`active()` 读取活动 tab。`isExpanded()` 与 `toggleExpanded()` 读取并驱动该列的展开；`toggleFullscreen(target)` 对捕获的停靠分栏执行面板控件的显示模式操作。布局操作供以编程方式安排该列的调用方使用，每个都像它替代的手势一样被记录：`focus(tabId)` 聚焦一个 tab 及其格；`split(paneId?, axis?)` 在与 tab 条控件相同的格内空间规则下向右（默认 `'row'`）或向下（`'column'`）分栏一个停靠格（默认活跃格），返回新格的 id，做不到时返回 `undefined`——且不记录任何东西；`float(tabId, rect?)` 把停靠 tab 浮出为浮窗；`dock(paneId)` 把浮窗放回活跃停靠格。不存在的 tab 或格、或已处于调用目标状态的，都原样不动。该接口发布有序分栏元数据，不暴露可变布局状态或撤销历史。`_undo()` / `_redo()` 步进屏幕上停靠面的历史；它们是 `@internal`——序列没有面向用户的控件，这两个只为测试存在。命令通过屏幕上会话已采用的 store 作用于该会话；没有会话在屏幕上、或运行时尚未创建它的 store 时，命令 throw，而不是写进一个没人绘制的面里。`mounted` 是「屏幕上的会话」的可观察值：Conversation 占据主栏时为选中的会话，全局面板替代它或没有选中会话时为 `undefined`。插件从会话选择与 `ctx.layout.panelInfo` 推导它，它在 React 渲染引起变化的那次更新之前就已改变，因此同一次提交里渲染的组件读到的是到来的会话，并可以在自己的 effect 里对它行动：框架在同一轮渲染里渲染该会话的席位，席位随之创建它的 store。席位从不发布它；每个席位只上报它渲染时依据的事实：停靠套件测得的空间，`split` 与 `preferNewPane` 把它用于该会话的分栏（未测量的分栏视为有空间）；以及框架宽度是否让面板自动全屏，全屏命令据此执行。计划审阅的自动打开通过绑定的 hook 读取 `mounted`。
 
 `focusedTarget(element?)` 解析当前 DOM 分栏和标签页，也接受嵌入 iframe；焦点位于外部时不返回页面。`commandTarget(element?)` 另外允许外部打开动作使用屏幕上会话的活动停靠分栏。捕获值包含 occurrence 和导航版本；`isTargetCurrent(target)` 拒绝会话变更、已移动或重新打开的标签页，以及期间发生的导航。焦点和指针激活独立于持久化的布局选择。
 
-`copyToMounted(tab)` 将记录的标签复制到屏幕上的 Session，不改变来源；`setPinned(sessionId, tabId, pinned)` 在切换 Session 时保留原视图及独立浏览器窗口。取消 pin 会暂存非当前窗口，而不关闭标签。插件负责自身锁定状态及跨 Session 复制策略。
+`copyToMounted(tab)` 将记录的标签复制到屏幕上的 Session，不改变来源。插件负责锁定状态及跨 Session 复制策略，并通过 `retainSession` 租约保留所需视图，包括窗口暂存期间。
+
+`panes` 按停靠树遍历顺序、再按浮动顺序观察每个已接管的 Session，包含有序 tab 记录、活动 tab 标识、外部挂载状态，以及已挂载时可见的 `element`。元素可能属于其他文档；插件应在元素所属文档中执行选择和高亮。Session 不再位于前台不表示其分栏已关闭。
+
+`registerTabAuxClickHandler(handler)` 注册由插件效果拥有的辅助鼠标按钮操作。原生标签控件提供所属 Session、标签及按钮；控制器只在原生关闭条件允许时分发中键操作。插件通过此回调处理锁定规则，无需拦截文档事件。注销后不再执行该操作；处理函数失败时保留标签。
+
+`registerFloatHandler(handler)` 在注册期间把原生浮动手势交给插件；返回 false 保留原生浮动面板行为。`floatIn`、`focusIn`、`dockIn` 和 `closePaneIn` 操作指定 Session。浮动分栏可包含多个 tab；重新停靠移动整个组，关闭调用已注册的资源清理函数。清理抛出异常时保留整个组。`attachPaneTarget(sessionId, paneId, element)` 把一个仍然存在的浮动分栏挂载到外部 DOM。返回的 `release()` 撤回目标，并仅在原生 DOM 返回后兑现；若目标从未收到所属 DOM，则可直接兑现。插件负责浏览器 Window、关闭事件、几何位置、停放和弹窗错误，销毁文档前必须等待释放。`retainSession(sessionId)` 提供独立于 tab 的渲染租约；插件在外部 DOM 返回后释放它。注销浮动处理函数立即恢复原生手势；插件卸载必须释放每个挂载和租约。
+
+`registerResourcePlacementResolver(resolver)` 注册有序同步导航策略。请求携带 Session、资源地址，以及可选的来源 tab、分栏和出现周期标识。tab 动作即使在浮动分栏中也提供当前来源。调用方显式指定的 `paneId`、`replaceTab` 或 `preferNewPane` 绕过策略。首个策略结果选择同一 Session 中仍然存在的分栏；缺失的目标不会选择其他 Session。来源分栏提供隐式回退。来源出现周期过期、来源移动或显式目标缺失都会取消打开。`revealScope: 'pane'` 只复用目标分栏内匹配的资源；默认仍在整个 Session 中复用。File Browser 的用户映射及持久化完全属于消费插件。
 
 <a id="the-tab-domain"></a>
 ## Tab 域

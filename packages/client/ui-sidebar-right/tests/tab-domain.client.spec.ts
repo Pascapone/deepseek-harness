@@ -1,3 +1,4 @@
+import { findTabPane } from '@deepseek-ai/dsh-client-ui-dockkit'
 /**
  * The Tab domain: what a record carries that the layout does not, and how long.
  *
@@ -165,23 +166,23 @@ describe('TabDomain — a tab\'s own actions', () => {
     const leftPane = getPane(current(), left).id
     const rightPane = getPane(current(), right).id
     occurrence.tabActions.openResource('dsh-resource://file/session/s-one/b.txt')
-    expect(navigator.openResourceIn).toHaveBeenLastCalledWith(SESSION, 'dsh-resource://file/session/s-one/b.txt', { paneId: leftPane })
+    expect(navigator.openResourceIn).toHaveBeenLastCalledWith(SESSION, 'dsh-resource://file/session/s-one/b.txt', { source: { tabId, paneId: leftPane, occurrenceId: occurrence.id } })
     controller.placeTab(tabId, rightPane, 0)
     domain.sync(SESSION, current())
     occurrence.tabActions.openResource('dsh-resource://file/session/s-one/b.txt', { params: { line: 1 } })
-    expect(navigator.openResourceIn).toHaveBeenLastCalledWith(SESSION, 'dsh-resource://file/session/s-one/b.txt', { paneId: rightPane, params: { line: 1 } })
+    expect(navigator.openResourceIn).toHaveBeenLastCalledWith(SESSION, 'dsh-resource://file/session/s-one/b.txt', { source: { tabId, paneId: rightPane, occurrenceId: occurrence.id }, params: { line: 1 } })
     // The caller's pane wins over the default.
     occurrence.tabActions.openResource('dsh-resource://file/session/s-one/b.txt', { paneId: leftPane })
-    expect(navigator.openResourceIn).toHaveBeenLastCalledWith(SESSION, 'dsh-resource://file/session/s-one/b.txt', { paneId: leftPane })
+    expect(navigator.openResourceIn).toHaveBeenLastCalledWith(SESSION, 'dsh-resource://file/session/s-one/b.txt', { paneId: leftPane, source: { tabId, paneId: rightPane, occurrenceId: occurrence.id } })
   })
 
-  it('opens unplaced from a floating tab, since a floating pane holds one tab', () => {
+  it('captures the source identity of a floating tab before placement', () => {
     const { domain, navigator, controller, current } = harness()
     const tabId = controller.openContent({ kind: 'text', contentId: 'dsh-resource://file/session/s-one/a.txt', title: 'a' })
     controller.floatTab(tabId)
     domain.sync(SESSION, current())
     domain.occurrence(SESSION, recordOf(current(), tabId)).tabActions.openResource('dsh-resource://file/session/s-one/b.txt')
-    expect(navigator.openResourceIn).toHaveBeenLastCalledWith(SESSION, 'dsh-resource://file/session/s-one/b.txt', {})
+    expect(navigator.openResourceIn).toHaveBeenLastCalledWith(SESSION, 'dsh-resource://file/session/s-one/b.txt', { source: { tabId, paneId: findTabPane(current(), tabId).id, occurrenceId: domain.occurrence(SESSION, { id: tabId }).id } })
   })
 
   it('replaces itself and closes itself through the navigator', () => {
@@ -207,7 +208,8 @@ describe('TabDomain — a tab\'s own actions', () => {
     expect(navigator.openResourceIn).toHaveBeenLastCalledWith(
       SESSION,
       'dsh-resource://file/session/s-one/a.txt',
-      { paneId: current().rootId, preferNewPane: true, revealIfOpened: false },
+      { source: { tabId, paneId: current().rootId, occurrenceId: domain.occurrence(SESSION, { id: tabId }).id },
+        preferNewPane: true, revealIfOpened: false },
     )
   })
 })

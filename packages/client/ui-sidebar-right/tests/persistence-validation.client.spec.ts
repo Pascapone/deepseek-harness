@@ -129,3 +129,13 @@ it('does not persist a scope until the live store has a surface for it', () => {
   instance.actions.setExpanded(session, true)
   expect(readSidebarLayout(session)?.layout.expanded).toBe(true)
 })
+
+
+it.each([1, 2])('restores a floating pane with %i tabs under the existing persistence namespace', (count) => {
+  const tabs = { tab2: tab, ...count === 2 ? { tab4: { ...tab, id: 'tab4', contentId: 'sidebar://terminal/second' } } : {} }
+  const saved = { minted: 4, layout: { ...empty.layout, floats: ['float3'],
+    nodes: { pane1: { ...pane, tabs: [], activeTabId: undefined }, float3: { ...pane, id: 'float3', host: 'float',
+      tabs: Object.keys(tabs), activeTabId: count === 2 ? 'tab4' : 'tab2', rect: { x: 10, y: 20, width: 600, height: 400 } } }, tabs } }
+  localStorage.setItem(key, JSON.stringify({ bySession: { [session]: saved } }))
+  expect(readSidebarLayout(session)?.layout.nodes).toEqual(JSON.parse(JSON.stringify(saved.layout.nodes)))
+})

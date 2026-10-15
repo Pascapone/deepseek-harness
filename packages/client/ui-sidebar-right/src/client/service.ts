@@ -36,7 +36,7 @@
 import { sidebarTargetFromElement, type SidebarRightTarget } from './focus.ts'
 import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
 import { createSnapshotStore, type ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
-import type { FloatRect, LayoutState, PaneId, SplitAxis, TabId, TabRecord } from '@deepseek-ai/dsh-client-ui-dockkit'
+import type { FloatRect, LayoutState, NodeId, PaneId, SplitAxis, TabId, TabRecord } from '@deepseek-ai/dsh-client-ui-dockkit'
 import { activeDockPaneId, findContentTab, findPaneContentTab, findTabPane, getPane } from '@deepseek-ai/dsh-client-ui-dockkit'
 import type { BoundActions } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -45,7 +45,7 @@ import { pageAddress } from './contract/seed.ts'
 import type { SidebarRightTabClaim, SidebarRightTabRegistry } from './tab-registry.ts'
 import { canCloseTab, splitAllowed, type SidebarRightState, type SurfaceState } from './stores.ts'
 import type { createSidebarRightStore } from './stores.ts'
-import { TabDomain, type PinResource } from './tab-domain.ts'
+import { TabDomain, type PinResource, type SidebarRightOccurrenceId } from './tab-domain.ts'
 import { SidebarTabInventory } from './tab-inventory.ts'
 
 /** The seat's bound action set. */
@@ -85,11 +85,11 @@ interface SidebarRightSessions {
  * @param tabs - registered tab types.
  * @param pin - resource retention for an occurrence's lifetime.
  * @param host - the viewport rule and focus continuity the commands use.
- * @param retainPinned - optional retention of a detached tab's Session view.
+ * @param retainSession - optional rendered Session retention lease.
  * @returns the controller; store adoption and scope removal; naming the on-screen Session; and recording a seat's room rule.
  */
 export function createSidebarRightController(tabs: SidebarRightTabRegistry, pin: PinResource, host: SidebarRightHost,
-  retainPinned?: (sessionId: SessionId, tabId: TabId, pinned: boolean) => void): {
+  retainSession?: (sessionId: SessionId) => () => void): {
   controller: SidebarRightController
   adopt: (sessionId: SessionId, store: SidebarRightSurfaceStore) => () => void
   forget: (sessionId: SessionId) => void
@@ -100,7 +100,7 @@ export function createSidebarRightController(tabs: SidebarRightTabRegistry, pin:
   const rooms = new Map<SessionId, RoomRule>()
   const onScreen = createSnapshotStore<SessionId | undefined>(undefined)
   const inventory = new SidebarTabInventory()
-  const controller = new SidebarRightController(tabs, pin, host, { adopted, rooms, onScreen, openTabs: inventory.source }, retainPinned)
+  const controller = new SidebarRightController(tabs, pin, host, { adopted, rooms, onScreen, openTabs: inventory.source }, retainSession)
   return {
     controller,
     forget: (sessionId) => {
@@ -116,8 +116,7 @@ export function createSidebarRightController(tabs: SidebarRightTabRegistry, pin:
         inventory.update(sessionId, Object.values(surface?.layout.tabs ?? {}))
         if (surface !== undefined) {
           controller.tabDomain.sync(sessionId, surface.layout)
-          controller.reconcileWindows(sessionId, surface.layout)
-          controller.resumeWindows(sessionId)
+          controller.reconcilePanes()
         }
       }
       const adoption: Adoption = { store, unsubscribe: store.subscribe(sync) }
@@ -125,7 +124,7 @@ export function createSidebarRightController(tabs: SidebarRightTabRegistry, pin:
       sync()
       return () => {
         adoption.unsubscribe()
-        if (adopted.get(sessionId) === adoption) adopted.delete(sessionId)
+        if (adopted.get(sessionId) === adoption) { adopted.delete(sessionId); controller.reconcilePanes() }
       }
     },
   }
@@ -166,12 +165,16 @@ export interface SidebarRightPlacement {
    * permits duplicates. Pages always deduplicate within the target pane.
    */
   readonly revealIfOpened?: boolean
+  /** Restrict reuse to the destination pane when requested. */
+  readonly revealScope?: 'pane' | 'session'
 }
 
 /** How a caller wants a resource opened. */
 export interface SidebarRightOpenResourceOptions extends SidebarRightPlacement {
   /** Name the opening type instead of letting the registry rank claims; its `canOpen` still applies. */
   readonly kind?: string
+  /** Live source captured by tab actions, before implicit placement. */
+  readonly source?: SidebarRightResourceSource
   /** The resource's navigation parameters, typed by resource type; delivered as `navigation.params`. */
   readonly params?: SidebarRightResourceParams
 }
@@ -264,18 +267,69 @@ export interface ISidebarRight {
    * @param paneId - the floating pane; one that is missing or docked is left alone.
    */
   dock(paneId: PaneId): void
-  /** Open one tab in a satellite browser window, leaving its layout owned by this page. */
-  popout(tabId: TabId, rect?: FloatRect): boolean
-  /** Install the window creator; no popup behavior exists without an explicit Web plugin. */
-  registerWindowOpener(open: (tab: TabRecord, bounds?: FloatRect) => Window | null): () => void
-  /** Copy a recorded tab into the mounted Session without removing its source. */
+  /** Ordered panes across adopted Sessions, with visible owner elements. */
+  readonly panes: ObservableSnapshot<readonly SidebarRightPaneInfo[]>
+  /** Attach plugin-owned DOM to a live floating pane. */
+  attachPaneTarget(sessionId: SessionId, paneId: PaneId, target: HTMLElement): SidebarRightPaneAttachment
+  /** Retain rendering of one adopted Session until release. */
+  retainSession(sessionId: SessionId): () => void
+  /** Float a tab in its owning Session and return its resulting pane identity. */
+  floatIn(sessionId: SessionId, tabId: TabId, rect?: FloatRect): PaneId | undefined
+  /** Dock the complete floating group. */
+  dockIn(sessionId: SessionId, paneId: PaneId): void
+  /** Close a complete floating group after resource cleanup. */
+  closePaneIn(sessionId: SessionId, paneId: PaneId): void
+  /** Native close eligibility for a Session's tab. */
+  canCloseIn(sessionId: SessionId, tabId: TabId): boolean
+  /** Focus a tab in its owning Session. */
+  focusIn(sessionId: SessionId, tabId: TabId): void
+  /** Register a reversible floating-presentation handler. */
+  registerFloatHandler(handler: (sessionId: SessionId, tabId: TabId, rect?: FloatRect) => boolean): () => void
+  /** Register auxiliary-button actions for live, natively closable tabs. */
+  registerTabAuxClickHandler(handler: (sessionId: SessionId, tabId: TabId, button: number) => void): () => void
+  /** Register a reversible ordered resource-placement policy. */
+  registerResourcePlacementResolver(resolver: SidebarRightResourcePlacementResolver): () => void
+  /** Copy a recorded tab into the mounted Session. */
   copyToMounted(tab: Pick<TabRecord, 'kind' | 'contentId' | 'title'>): TabId
-  /** Keep a detached window and its source Session view alive across selections. */
-  setPinned(sessionId: SessionId, tabId: TabId, pinned: boolean): void
 }
 
-type Satellite = { window: Window; target: HTMLElement; tabId: TabId; paneId: PaneId; sessionId: SessionId; stop: () => void }
-type ParkedSatellite = { tabId: TabId; paneId: PaneId; sessionId: SessionId; bounds: FloatRect }
+/** Source lifetime used to reject delayed resource navigation. */
+export interface SidebarRightResourceSource {
+  readonly tabId: TabId
+  readonly paneId: PaneId
+  readonly occurrenceId: SidebarRightOccurrenceId
+}
+/** Resource navigation before any implicit source-pane default. */
+export interface SidebarRightResourcePlacementRequest {
+  readonly sessionId: SessionId
+  readonly address: string
+  readonly source?: SidebarRightResourceSource
+}
+/** Ordered resolver's optional same-Session placement. */
+export type SidebarRightResourcePlacementResolver = (request: SidebarRightResourcePlacementRequest) =>
+  { readonly paneId: PaneId; readonly revealScope?: 'pane' | 'session' } | undefined
+/** One committed pane, in dock traversal then floating order. */
+export interface SidebarRightPaneInfo {
+  readonly sessionId: SessionId
+  readonly paneId: PaneId
+  readonly host: 'dock' | 'float'
+  readonly external: boolean
+  readonly tabs: readonly TabRecord[]
+  readonly activeTabId?: TabId
+  readonly element?: HTMLElement
+}
+/** Release settles once the pane's live DOM has returned to its native owner. */
+export interface SidebarRightPaneAttachment {
+  release(): Promise<void>
+}
+interface PaneAttachment {
+  readonly sessionId: SessionId
+  readonly paneId: PaneId
+  readonly target: HTMLElement
+  readonly returned: Promise<void>
+  readonly resolve: () => void
+  releasing: boolean
+}
 
 /** Cross-plugin right-Sidebar face (ctx.sidebarRight). */
 export class SidebarRightController implements ISidebarRight {
@@ -286,14 +340,16 @@ export class SidebarRightController implements ISidebarRight {
   private readonly adopted: ReadonlyMap<SessionId, Adoption>
   private readonly rooms: ReadonlyMap<SessionId, RoomRule>
   private readonly closeHandlers = new Map<string, SidebarRightCloseHandler>()
-  private windowOpener: ((tab: TabRecord, bounds?: FloatRect) => Window | null) | undefined
-  private readonly windows = new Map<string, Satellite>()
-  private readonly parked = new Map<string, ParkedSatellite>()
-  private readonly pinned = new Set<string>()
-  private activeSession: SessionId | undefined
-  private resumeSession: SessionId | undefined
-  /** Detached tab targets keyed by their Session and tab identities. */
-  readonly popouts = createSnapshotStore<ReadonlyMap<string, HTMLElement | undefined>>(new Map())
+  private floatHandler: ((sessionId: SessionId, tabId: TabId, rect?: FloatRect) => boolean) | undefined
+  private tabAuxClickHandler: ((sessionId: SessionId, tabId: TabId, button: number) => void) | undefined
+  private readonly resolvers = new Set<SidebarRightResourcePlacementResolver>()
+  private readonly attachments = new Map<string, PaneAttachment>()
+  private readonly paneElements = new Map<string, HTMLElement>()
+  /** Ordered committed pane records, including background adopted Sessions. */
+  readonly panes = createSnapshotStore<readonly SidebarRightPaneInfo[]>([])
+  /** Live external destinations, keyed by Session and pane identity. */
+  readonly paneTargets = createSnapshotStore<ReadonlyMap<string, HTMLElement>>(new Map())
+
 
   /**
    * Register resource cleanup before explicit removal. Failure preserves the tab.
@@ -324,7 +380,7 @@ export class SidebarRightController implements ISidebarRight {
     pin: PinResource,
     private readonly host: SidebarRightHost,
     sessions: SidebarRightSessions,
-    private readonly retainPinned?: (sessionId: SessionId, tabId: TabId, pinned: boolean) => void,
+    private readonly retainView?: (sessionId: SessionId) => () => void,
   ) {
     this.adopted = sessions.adopted
     this.rooms = sessions.rooms
@@ -403,6 +459,12 @@ export class SidebarRightController implements ISidebarRight {
     this.removeAfterCleanup(sessionId, tab, () => { actions.closeTab(sessionId, tabId) })
   }
 
+  /** Whether a tab can close under the native sole-guide rule in its owning Session. */
+  canCloseIn(sessionId: SessionId, tabId: TabId): boolean {
+    const surface = this.adopted.get(sessionId)?.store.getSnapshot().bySession[sessionId]
+    return surface !== undefined && canCloseTab(surface, tabId)
+  }
+
   private removeAfterCleanup(sessionId: SessionId, tab: TabRecord, commit: () => void): void {
     this.closeHandlers.get(tab.kind)?.(sessionId, tab)
     commit()
@@ -418,7 +480,29 @@ export class SidebarRightController implements ISidebarRight {
     if (!address.startsWith(RESOURCE_SCHEME)) {
       throw new Error(`sidebarRight: no registered tab type claims "${address}"`)
     }
-    this.place(sessionId, actions, this.tabs.claim(address, options.kind), address, options, options.params)
+    const layout = this.layoutIn(sessionId)
+    const source = options.source
+    if (source !== undefined) {
+      if (layout?.tabs[source.tabId] === undefined || findTabPane(layout, source.tabId).id !== source.paneId
+        || this.tabDomain.occurrence(sessionId, { id: source.tabId }).id !== source.occurrenceId) return
+    }
+    let placement: SidebarRightPlacement = options
+    if (options.paneId === undefined && options.replaceTab === undefined && options.preferNewPane === undefined) {
+      for (const resolver of this.resolvers) {
+        const proposed = resolver({ sessionId, address, ...source === undefined ? {} : { source } })
+        if (proposed === undefined) continue
+        if (layout?.nodes[proposed.paneId]?.kind !== 'pane') break
+        placement = { ...options, ...proposed, ...options.revealScope === undefined ? {} : { revealScope: options.revealScope } }
+        break
+      }
+      if (placement.paneId === undefined && source !== undefined) placement = { ...placement, paneId: source.paneId }
+    }
+    if (placement.paneId === undefined && placement.replaceTab === undefined && source !== undefined) {
+      placement = { ...placement, paneId: source.paneId }
+    }
+    if (placement.paneId !== undefined && layout?.nodes[placement.paneId]?.kind !== 'pane') return
+    if (placement.replaceTab !== undefined && layout?.tabs[placement.replaceTab] === undefined) return
+    this.place(sessionId, actions, this.tabs.claim(address, options.kind), address, placement, options.params)
   }
 
   /** Place a page type in one session at the address pages are recorded under; an unregistered kind throws. */
@@ -463,6 +547,7 @@ export class SidebarRightController implements ISidebarRight {
       ...preferNewPane ? { preferNewPane: true } : {},
       ...placement.replaceTab === undefined ? {} : { replaceTab: placement.replaceTab },
       ...placement.revealIfOpened === undefined ? {} : { revealIfOpened: placement.revealIfOpened },
+      ...placement.revealScope === undefined ? {} : { revealScope: placement.revealScope },
     }, (tabId) => { this.tabDomain.navigate(sessionId, tabId, { address, params }) }) }
     const layout = surface?.layout
     const replaced = placement.replaceTab === undefined ? undefined : layout?.tabs[placement.replaceTab]
@@ -470,7 +555,9 @@ export class SidebarRightController implements ISidebarRight {
     const revealed = layout === undefined ? undefined
       : claim.contentId === pageAddress(claim.kind)
         ? findPaneContentTab(layout, replacementPane?.host === 'dock' ? replacementPane.id : placement.paneId ?? activeDockPaneId(layout), claim.contentId, claim.kind)
-        : placement.revealIfOpened === false ? undefined : findContentTab(layout, claim.contentId, claim.kind)
+        : placement.revealIfOpened === false ? undefined : placement.revealScope === 'pane'
+          ? findPaneContentTab(layout, targetPane ?? activeDockPaneId(layout), claim.contentId, claim.kind)
+          : findContentTab(layout, claim.contentId, claim.kind)
     if (replaced === undefined || replaced.id === revealed) { commit(); return }
     this.removeAfterCleanup(sessionId, replaced, commit)
   }
@@ -483,17 +570,6 @@ export class SidebarRightController implements ISidebarRight {
     if (copied === undefined) throw new Error('sidebarRight: copy did not create a tab')
     this.tabDomain.navigate(sessionId, copied, { address: tab.contentId, params: undefined })
     return copied
-  }
-
-  /** Keep detached tabs mounted while locked, without changing their Session ownership. */
-  setPinned(sessionId: SessionId, tabId: TabId, pinned: boolean): void {
-    const key = `${sessionId}:${tabId}`
-    if (this.pinned.has(key) === pinned) return
-    if (pinned) this.pinned.add(key)
-    else this.pinned.delete(key)
-    const opened = this.windows.get(key)
-    if (!pinned && opened !== undefined && sessionId !== this.activeSession) this.parkWindow(key, opened)
-    this.retainPinned?.(sessionId, tabId, pinned)
   }
 
   /**
@@ -543,6 +619,11 @@ export class SidebarRightController implements ISidebarRight {
     actions.focusTab(sessionId, tabId)
   }
 
+  /** Focus a live tab in its owning Session, including an external background pane. */
+  focusIn(sessionId: SessionId, tabId: TabId): void {
+    if (this.layoutIn(sessionId)?.tabs[tabId] !== undefined) this.actionsFor(sessionId)?.focusTab(sessionId, tabId)
+  }
+
   /**
    * Capture the page owning current DOM focus; outside focus never uses layout history.
    * @param element - explicit input target, including an embedding iframe; defaults to live document focus.
@@ -588,7 +669,7 @@ export class SidebarRightController implements ISidebarRight {
         this.focus(tab.id)
       } else {
         this.openTab(kind, {
-          ...target.host === 'dock' ? { paneId: target.paneId } : {},
+          paneId: target.paneId,
           ...tab?.kind === 'guide' ? { replaceTab: tab.id } : {},
         })
       }
@@ -716,191 +797,167 @@ export class SidebarRightController implements ISidebarRight {
     actions.unfloatPane(sessionId, paneId)
   }
 
-  registerWindowOpener(open: (tab: TabRecord, bounds?: FloatRect) => Window | null): () => void {
-    if (this.windowOpener !== undefined) throw new Error('sidebarRight: window opener already registered')
-    this.windowOpener = open
-    this.resumeSession = this.activeSession
-    if (this.activeSession !== undefined) this.resumeWindows(this.activeSession)
-    const closeAll = (): void => {
-      for (const key of [...this.windows.keys()]) this.releaseWindow(key, true, true)
-    }
-    window.addEventListener('pagehide', closeAll)
-    return () => {
-      if (this.windowOpener !== open) return
-      this.windowOpener = undefined
-      window.removeEventListener('pagehide', closeAll)
-      closeAll()
-    }
+  /** Register a plugin-owned floating presentation; false uses native floating panels. */
+  registerFloatHandler(handler: (sessionId: SessionId, tabId: TabId, rect?: FloatRect) => boolean): () => void {
+    if (this.floatHandler !== undefined) throw new Error('sidebarRight: float handler already registered')
+    this.floatHandler = handler
+    return () => { if (this.floatHandler === handler) this.floatHandler = undefined }
   }
 
-  /**
-   * Close inactive Session windows without docking their tabs; reopen on selection.
-   * @param sessionId - selected Session, or none.
+  /** Install native tab gestures without document-level event interception.
+   * @param handler - plugin action for the owning Session, tab and auxiliary button.
+   * @returns effect-owned unregister callback.
    */
-  activateWindows(sessionId: SessionId | undefined): void {
-    if (this.activeSession === sessionId) return
-    for (const [key, opened] of [...this.windows]) {
-      if (opened.window.closed) { this.closedWindow(opened); continue }
-      if (this.pinned.has(key)) continue
-      this.parkWindow(key, opened)
-    }
-    this.activeSession = sessionId
-    this.resumeSession = sessionId
-    if (sessionId !== undefined) this.resumeWindows(sessionId)
+  registerTabAuxClickHandler(handler: (sessionId: SessionId, tabId: TabId, button: number) => void): () => void {
+    if (this.tabAuxClickHandler !== undefined) throw new Error('sidebarRight: tab auxiliary handler already registered')
+    this.tabAuxClickHandler = handler
+    return () => { if (this.tabAuxClickHandler === handler) this.tabAuxClickHandler = undefined }
   }
 
-  private parkWindow(key: string, opened: Satellite): void {
-    const { screenX, screenY, outerWidth, outerHeight } = opened.window
-    this.parked.set(key, { sessionId: opened.sessionId, tabId: opened.tabId, paneId: opened.paneId,
-      bounds: { x: Number.isFinite(screenX) ? screenX : 0, y: Number.isFinite(screenY) ? screenY : 0,
-        width: outerWidth > 0 ? outerWidth : 900, height: outerHeight > 0 ? outerHeight : 700 } })
-    this.releaseWindow(key)
-  }
-
-  /**
-   * Retry only once per selection; browsers may refuse automatic popups.
-   * @param sessionId - Session whose parked windows may reopen.
+  /** Dispatch a native gesture only while the addressed tab remains closable.
+   * @param sessionId - the tab's owning adopted Session.
+   * @param tabId - live tab receiving the gesture.
+   * @param button - auxiliary pointer button.
    */
-  resumeWindows(sessionId: SessionId): void {
-    if (this.resumeSession !== sessionId || this.windowOpener === undefined) return
-    const layout = this.adopted.get(sessionId)?.store.getSnapshot().bySession[sessionId]?.layout
-    if (layout === undefined) return
-    this.resumeSession = undefined
-    for (const [key, parked] of [...this.parked]) {
-      if (parked.sessionId !== sessionId) continue
-      const tab = layout.tabs[parked.tabId]
-      if (tab === undefined) { this.parked.delete(key); this.publishWindows(); continue }
-      try {
-        const popup = this.windowOpener(tab, parked.bounds)
-        if (popup !== null && this.attachWindow(sessionId, tab.id, parked.paneId, popup)) {
-          continue
-        }
-      } catch (error) {
-        console.warn('sidebarRight: detached window could not be restored', parked.tabId, error)
-        continue
-      }
-      console.warn('sidebarRight: browser blocked restoring a detached tab window', parked.tabId)
-    }
+  requestTabAuxClick(sessionId: SessionId, tabId: TabId, button: number): void {
+    if (button !== 1 || !this.canCloseIn(sessionId, tabId)) return
+    try { this.tabAuxClickHandler?.(sessionId, tabId, button) }
+    catch (error) { console.error('sidebarRight: tab auxiliary action failed', error) }
   }
 
-  /** A satellite renders the original React tab: it never owns a second layout writer. */
-  popout(tabId: TabId, rect?: FloatRect): boolean {
-    const { sessionId, actions } = this.require()
-    const layout = this.mountedSurface()?.layout
-    const tab = layout?.tabs[tabId]
-    const open = this.windowOpener
-    if (layout === undefined || tab === undefined || open === undefined) return false
-    const key = `${sessionId}:${tabId}`
-    if (this.windows.has(key)) { this.windows.get(key)?.window.focus(); return true }
-    const popup = open(tab, this.parked.get(key)?.bounds)
-    if (popup === null) return false
-    try {
-      if (findTabPane(layout, tabId).host === 'dock') actions.floatTab(sessionId, tabId, rect)
-      const updated = this.adopted.get(sessionId)?.store.getSnapshot().bySession[sessionId]?.layout
-      const pane = updated === undefined ? undefined : findTabPane(updated, tabId)
-      if (pane?.host !== 'float' || !this.attachWindow(sessionId, tabId, pane.id, popup)) {
-        popup.close()
-        return false
-      }
-      return true
-    } catch (error) {
-      popup.close()
-      throw error
-    }
-  }
-
-  private attachWindow(sessionId: SessionId, tabId: TabId, paneId: PaneId, popup: Window): boolean {
-    let target: HTMLElement
-    try { target = popup.document.body }
-    catch { popup.close(); return false }
-    const opened: Satellite = { window: popup, target, sessionId, tabId, paneId, stop: () => {} }
-    const onClose = (): void => { this.closedWindow(opened) }
-    popup.addEventListener('pagehide', onClose)
-    const interval = window.setInterval(() => { if (popup.closed) onClose() }, 1000)
-    opened.stop = () => { popup.removeEventListener('pagehide', onClose); window.clearInterval(interval) }
-    const key = `${sessionId}:${tabId}`
-    this.windows.set(key, opened)
-    this.parked.delete(key)
-    this.publishWindows()
-    return true
-  }
-
-  /** Native window closure is a tab close, unlike explicit docking or session-switch parking. */
-  private closedWindow(opened: Satellite): void {
-    const key = `${opened.sessionId}:${opened.tabId}`
-    if (this.windows.get(key) !== opened) return
-    this.releaseWindow(key, false)
-    try { this.closeIn(opened.sessionId, opened.tabId) }
-    catch (error) { console.error('Sidebar tab close failed:', error) }
-  }
-
-  /**
-   * Follow a floating pane through tab replacement; release it when the pane docks or closes.
-   * @param sessionId - owning Session identity.
-   * @param layout - latest committed Session layout.
+  /** Float through the installed presentation or the native layout.
+   * @param sessionId - owning adopted Session.
+   * @param tabId - live tab requested for floating.
+   * @param rect - optional native panel geometry.
    */
-  reconcileWindows(sessionId: SessionId, layout: LayoutState): void {
-    for (const [key, opened] of [...this.windows]) {
-      if (opened.sessionId !== sessionId) continue
-      const pane = layout.nodes[opened.paneId]
-      const tabId = pane?.kind === 'pane' && pane.host === 'float' ? pane.tabs[0] : undefined
-      const tab = tabId === undefined ? undefined : layout.tabs[tabId]
-      if (tabId === undefined || tab === undefined) { this.releaseWindow(key); continue }
-      if (tabId !== opened.tabId) {
-        this.windows.delete(key)
-        opened.tabId = tabId
-        this.windows.set(`${sessionId}:${tabId}`, opened)
-        try { opened.window.document.title = `${tab.title} — DSH` } catch { /* window closed concurrently */ }
-        this.publishWindows()
-      }
-    }
-    let changed = false
-    for (const [key, parked] of [...this.parked]) {
-      if (parked.sessionId !== sessionId) continue
-      const pane = layout.nodes[parked.paneId]
-      const tabId = pane?.kind === 'pane' && pane.host === 'float' ? pane.tabs[0] : undefined
-      if (tabId === undefined || layout.tabs[tabId] === undefined) {
-        this.parked.delete(key)
-        changed = true
-        continue
-      }
-      if (tabId !== parked.tabId) {
-        this.parked.delete(key)
-        this.parked.set(`${sessionId}:${tabId}`, { ...parked, tabId })
-        changed = true
-      }
-    }
-    if (changed) this.publishWindows()
+  requestFloat(sessionId: SessionId, tabId: TabId, rect?: FloatRect): void {
+    if (!this.floatHandler?.(sessionId, tabId, rect)) this.floatIn(sessionId, tabId, rect)
   }
 
-  private publishWindows(): void {
-    const targets = new Map<string, HTMLElement | undefined>([...this.parked.keys()].map(key => [key, undefined]))
-    for (const [key, opened] of this.windows) targets.set(key, opened.target)
-    this.popouts.set(targets)
+  /** Float a live tab in its owning Session and return its stable pane identity. */
+  floatIn(sessionId: SessionId, tabId: TabId, rect?: FloatRect): PaneId | undefined {
+    const layout = this.layoutIn(sessionId)
+    if (layout?.tabs[tabId] === undefined) return undefined
+    if (findTabPane(layout, tabId).host === 'dock') this.actionsFor(sessionId)?.floatTab(sessionId, tabId, rect)
+    const next = this.layoutIn(sessionId)
+    return next?.tabs[tabId] === undefined ? undefined : findTabPane(next, tabId).id
   }
 
-  private releaseWindow(key: string, close = true, immediately = false): void {
-    const opened = this.windows.get(key)
-    if (opened === undefined) return
-    this.windows.delete(key)
-    opened.stop()
-    this.publishWindows()
-    if (!close || opened.window.closed) return
-    const content = opened.target.querySelector('[data-dockkit-content]')
-    if (immediately || content === null) { opened.window.close(); return }
-    const observer = new MutationObserver(() => {
-      if (opened.target.contains(content)) return
-      observer.disconnect()
-      window.removeEventListener('pagehide', finish)
-      if (!opened.window.closed) opened.window.close()
-    })
-    const finish = (): void => {
-      observer.disconnect()
-      if (!opened.window.closed) opened.window.close()
+  /** Dock all tabs of a floating pane through native page deduplication. */
+  dockIn(sessionId: SessionId, paneId: PaneId): void {
+    const pane = this.layoutIn(sessionId)?.nodes[paneId]
+    if (pane?.kind === 'pane' && pane.host === 'float') this.actionsFor(sessionId)?.unfloatPane(sessionId, paneId)
+  }
+
+  /** Close a pane's tabs using every resource owner's cleanup before removal. */
+  closePaneIn(sessionId: SessionId, paneId: PaneId): void {
+    const layout = this.layoutIn(sessionId)
+    const pane = layout?.nodes[paneId]
+    if (pane?.kind !== 'pane' || pane.host !== 'float') return
+    for (const id of pane.tabs) {
+      const tab = layout?.tabs[id]
+      if (tab !== undefined) this.closeHandlers.get(tab.kind)?.(sessionId, tab)
     }
-    // Closing before React moves its mount would destroy the tab's live DOM.
-    observer.observe(opened.target, { childList: true, subtree: true })
-    window.addEventListener('pagehide', finish, { once: true })
+    this.actionsFor(sessionId)?.closePane(sessionId, paneId)
+  }
+
+  /** Hold a rendered Session independently of foreground selection; caller owns disposal. */
+  retainSession(sessionId: SessionId): () => void {
+    if (!this.adopted.has(sessionId)) throw new Error('sidebarRight: Session is not adopted')
+    return this.retainView?.(sessionId) ?? (() => {})
+  }
+
+  /** Add an ordered resource placement policy; unregister removes its effect. */
+  registerResourcePlacementResolver(resolver: SidebarRightResourcePlacementResolver): () => void {
+    this.resolvers.add(resolver)
+    return () => { this.resolvers.delete(resolver) }
+  }
+
+  /** Attach a floating pane to plugin-owned DOM without taking ownership of its document. */
+  attachPaneTarget(sessionId: SessionId, paneId: PaneId, target: HTMLElement): SidebarRightPaneAttachment {
+    const pane = this.layoutIn(sessionId)?.nodes[paneId]
+    if (pane?.kind !== 'pane' || pane.host !== 'float') throw new Error('sidebarRight: external target requires a live floating pane')
+    const key = `${sessionId}:${paneId}`
+    if (this.attachments.has(key)) throw new Error('sidebarRight: pane already attached or returning')
+    let resolve = (): void => {}
+    const returned = new Promise<void>((done) => { resolve = done })
+    const entry: PaneAttachment = { sessionId, paneId, target, returned, resolve, releasing: false }
+    this.attachments.set(key, entry)
+    this.publishTargets()
+    this.reconcilePanes()
+    return { release: () => {
+      entry.releasing = true
+      this.publishTargets()
+      const element = this.paneElements.get(key)
+      if (element === undefined || !target.contains(element)) this.paneReleased(sessionId, paneId, target)
+      this.reconcilePanes()
+      return returned
+    } }
+  }
+
+  /** Dockkit acknowledges only after its live pane DOM leaves the old target.
+   * @param sessionId - owning Session.
+   * @param paneId - returning pane identity.
+   * @param target - exact previously attached destination.
+   */
+  paneReleased(sessionId: SessionId, paneId: PaneId, target: HTMLElement): void {
+    const key = `${sessionId}:${paneId}`
+    const entry = this.attachments.get(key)
+    if (entry?.target !== target || !entry.releasing) return
+    this.attachments.delete(key)
+    entry.resolve()
+  }
+
+  /** Record visible pane elements across owner documents for plugin selection and highlighting.
+   * @param sessionId - owning Session.
+   * @param paneId - visible pane identity.
+   * @param element - mounted shell, or null when withdrawn.
+   */
+  paneElement(sessionId: SessionId, paneId: PaneId, element: HTMLElement | null): void {
+    const key = `${sessionId}:${paneId}`
+    if (this.paneElements.get(key) === (element ?? undefined)) return
+    if (element === null) this.paneElements.delete(key)
+    else {
+      if (element.hasAttribute('data-dockkit-float')) element.dataset.sidebarRightSession = sessionId
+      this.paneElements.set(key, element)
+    }
+    this.reconcilePanes()
+  }
+
+  /** Refresh ordered metadata after a committed layout change. */
+  reconcilePanes(): void {
+    for (const entry of this.attachments.values()) {
+      const pane = this.layoutIn(entry.sessionId)?.nodes[entry.paneId]
+      if (pane?.kind !== 'pane' || pane.host !== 'float') entry.releasing = true
+    }
+    this.publishTargets()
+    const result: SidebarRightPaneInfo[] = []
+    for (const [sessionId] of this.adopted) {
+      const layout = this.layoutIn(sessionId)
+      if (layout === undefined) continue
+      const visit = (id: NodeId): void => {
+        const node = layout.nodes[id]
+        if (node?.kind === 'split') { for (const child of node.children) visit(child); return }
+        if (node?.kind !== 'pane') return
+        const element = this.paneElements.get(`${sessionId}:${node.id}`)
+        result.push({ sessionId, paneId: node.id, host: node.host, external: this.paneTargets.getSnapshot().has(`${sessionId}:${node.id}`), tabs: node.tabs.map(id => layout.tabs[id]).filter((tab): tab is TabRecord => tab !== undefined),
+          ...node.activeTabId === undefined ? {} : { activeTabId: node.activeTabId }, ...element === undefined ? {} : { element } })
+      }
+      visit(layout.rootId)
+      for (const id of layout.floats) visit(id)
+    }
+    this.panes.set(result)
+  }
+
+  private publishTargets(): void {
+    const targets = new Map<string, HTMLElement>()
+    for (const [key, entry] of this.attachments) if (!entry.releasing) targets.set(key, entry.target)
+    const old = this.paneTargets.getSnapshot()
+    if (old.size !== targets.size || [...targets].some(([key, value]) => old.get(key) !== value)) this.paneTargets.set(targets)
+  }
+
+  private layoutIn(sessionId: SessionId): LayoutState | undefined {
+    return this.adopted.get(sessionId)?.store.getSnapshot().bySession[sessionId]?.layout
   }
 
   /**

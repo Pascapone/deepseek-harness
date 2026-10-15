@@ -116,3 +116,20 @@ it('reports opening failure and releases Views even when committed roots are sti
   unmount()
   expect(release).toHaveBeenCalledOnce()
 })
+
+
+it('retains an inactive Session by lease independently of its tabs and releases idempotently', async () => {
+  const r = await runtime()
+  const views = new SidebarSessionViews(r.sessions)
+  owners.push(views)
+  views.select(A)
+  const first = views.retain(A)
+  const second = views.retain(A)
+  views.select(B)
+  expect(views.source.getSnapshot().map(view => view.sessionId)).toContain(A)
+  first(); first()
+  expect(views.source.getSnapshot().map(view => view.sessionId)).toContain(A)
+  second()
+  expect(views.source.getSnapshot().map(view => view.sessionId)).not.toContain(A)
+  expect(() => views.retain(A)).toThrow('not owned')
+})

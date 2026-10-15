@@ -99,6 +99,8 @@ export interface SidebarRightInjected {
   readonly openTab: (kind: string, options?: SidebarRightOpenTabOptions) => void
   /** Close through the resource owner's cleanup handler. */
   readonly closeTab: (tabId: TabId) => void
+  /** Close a complete floating group through resource cleanup. */
+  readonly closePane: (paneId: PaneId) => void
   /** Split through the same controller as keyboard commands. */
   readonly splitPane: (paneId: PaneId) => void
   /** Toggle the dock panel using its current display mode. */
@@ -106,14 +108,17 @@ export interface SidebarRightInjected {
   readonly hooks: {
     readonly shortcuts: HostObservable<readonly ShortcutCatalogEntry[]>
     readonly tabTypes: HostObservable<readonly SidebarRightTabDefinition[]>
-    readonly popouts: HostObservable<ReadonlyMap<string, HTMLElement | undefined>>
+    readonly paneTargets: HostObservable<ReadonlyMap<string, HTMLElement>>
   }
   readonly keyedHooks: {
     readonly tabNavigation: (key: string) => HostObservable<SidebarRightTabNavigation>
   }
   /** Read a committed record's lifetime; never creates an occurrence. */
   readonly occurrence: (tab: Pick<TabRecord, 'id'>) => TabOccurrence
-  readonly popout: (tabId: TabId, rect?: FloatRect) => boolean
+  readonly floatTab: (sessionId: SessionId, tabId: TabId, rect?: FloatRect) => void
+  readonly tabAuxClick?: (sessionId: SessionId, tabId: TabId, button: number) => void
+  readonly paneReleased: (sessionId: SessionId, paneId: PaneId, target: HTMLElement) => void
+  readonly paneElement: (sessionId: SessionId, paneId: PaneId, element: HTMLElement | null) => void
 }
 
 /** The column seat's props: session scope, so the session arrives as a standard prop. */
@@ -133,6 +138,7 @@ interface PanelProps {
   readonly renderSlot: Children['renderSlot']
   readonly openTab: SidebarRightInjected['openTab']
   readonly closeTab: SidebarRightInjected['closeTab']
+  readonly closePane: SidebarRightInjected['closePane']
   readonly splitPane: SidebarRightInjected['splitPane']
   readonly toggleFullscreen: SidebarRightInjected['toggleFullscreen']
   readonly shortcuts: readonly ShortcutCatalogEntry[]
@@ -144,8 +150,11 @@ interface PanelProps {
   readonly autoFullscreen: boolean
   readonly active: boolean
   readonly retainTab: RightbarSeatProps['retainTab']
-  readonly windows: ReadonlyMap<string, HTMLElement | undefined>
-  readonly popout: SidebarRightInjected['popout']
+  readonly windows: ReadonlyMap<string, HTMLElement>
+  readonly floatTab: SidebarRightInjected['floatTab']
+  readonly tabAuxClick: SidebarRightInjected['tabAuxClick']
+  readonly paneReleased: SidebarRightInjected['paneReleased']
+  readonly paneElement: SidebarRightInjected['paneElement']
   /** Receives the kit's room-rule readings for the service's `split`. */
   readonly reportRoom: (fits: ReadonlyMap<PaneId, HalvesFit>) => void
 }
@@ -162,7 +171,7 @@ function guideIn(layout: LayoutState, paneId: PaneId): TabId | undefined {
  * @param openTab - the navigation face's `openTab`, which the strip's add control asks for a guide through.
  * @returns the intents the kit reports gestures to.
  */
-export function intentsFor(sessionId: SessionId, actions: Store['actions'], openTab: PanelProps['openTab'], closeTab?: PanelProps['closeTab'], splitPane?: PanelProps['splitPane'], popout?: PanelProps['popout']): DockIntents {
+export function intentsFor(sessionId: SessionId, actions: Store['actions'], openTab: PanelProps['openTab'], closeTab?: PanelProps['closeTab'], splitPane?: PanelProps['splitPane'], floatTab?: PanelProps['floatTab'], closePane?: PanelProps['closePane']): DockIntents {
   return {
     focusTab: (tabId) => { actions.focusTab(sessionId, tabId) },
     focusPane: (paneId) => { actions.focusPane(sessionId, paneId) },
@@ -173,9 +182,11 @@ export function intentsFor(sessionId: SessionId, actions: Store['actions'], open
     // already holds, so the ask is idempotent all the same.
     addTab: (paneId) => { openTab(GUIDE_KIND, { paneId, revealIfOpened: false }) },
     closeTab: closeTab ?? ((tabId) => { actions.closeTab(sessionId, tabId) }),
+    ...closePane === undefined ? {} : { closePane },
     duplicateTab: (tabId) => { actions.duplicateTab(sessionId, tabId) },
     floatTab: (tabId, rect?: FloatRect) => {
-      if (!popout?.(tabId, rect)) actions.floatTab(sessionId, tabId, rect)
+      if (floatTab === undefined) actions.floatTab(sessionId, tabId, rect)
+      else floatTab(sessionId, tabId, rect)
     },
     unfloatPane: (paneId) => { actions.unfloatPane(sessionId, paneId) },
     placeTab: (tabId, toPaneId, index) => { actions.placeTab(sessionId, tabId, toPaneId, index) },
@@ -202,8 +213,9 @@ function TabSlot({
 }: TabSlotProps): ReactNode {
   const { id, signal, tabActions } = occurrence(tab)
   const definition = useTabTypes(types => types.find(definition => definition.kind === tab.kind))
-  const key = `${sessionId}:${tab.id}`
-  const inWindow = windows.get(key) !== undefined
+  const paneId = useStore(state => Object.values(state.bySession[sessionId]?.layout.nodes ?? {}).find(node => node.kind === 'pane' && node.tabs.includes(tab.id))?.id)
+  const key = `${sessionId}:${paneId}`
+  const inWindow = windows.has(key)
   const retained = seat === 'sidebar.right.pane.tab' && (definition?.keepMounted === true || windows.has(key))
   useLayoutEffect(() => retained ? retainTab(tab.id, signal) : undefined, [retained, retainTab, tab.id, signal])
   const hookContext = useMemo((): TabHookContext => ({
@@ -338,13 +350,16 @@ function SidebarPanel(panel: PanelProps & { width: number; panelRef: RefObject<H
           minPaneFraction={0.2}
           canAddTab={paneId => guideIn(surface.layout, paneId) === undefined}
           canCloseTab={tabId => canCloseTab(surface, tabId)}
-          intents={intentsFor(sessionId, actions, openTab, panel.closeTab, panel.splitPane, panel.popout)}
+          intents={intentsFor(sessionId, actions, openTab, panel.closeTab, panel.splitPane, panel.floatTab, panel.closePane)}
           labels={dockLabels(t, panel.shortcuts.find(entry => entry.id === 'pane.split'), panel.shortcuts.find(entry => entry.id === 'page.close'))}
           renderTab={bodiesFor(panel)}
           renderTabTitle={titlesFor(panel)}
-          active={panel.active || [...panel.windows].some(([key, target]) => target !== undefined && key.startsWith(`${sessionId}:`))}
-          keepMounted={tab => types.find(type => type.kind === tab.kind)?.keepMounted === true || panel.windows.has(`${sessionId}:${tab.id}`)}
-          popoutTarget={tabId => panel.windows.get(`${sessionId}:${tabId}`)}
+          active={panel.active || [...panel.windows.keys()].some(key => key.startsWith(`${sessionId}:`))}
+          keepMounted={tab => types.find(type => type.kind === tab.kind)?.keepMounted === true}
+          externalPaneTargets={new Map([...panel.windows].filter(([key]) => key.startsWith(`${sessionId}:`)).map(([key, target]) => [key.slice(sessionId.length + 1) as PaneId, target]))}
+          onExternalPaneReleased={(paneId, target) => { panel.paneReleased(sessionId, paneId, target) }}
+          onPaneElement={(paneId, element) => { panel.paneElement(sessionId, paneId, element) }}
+          onTabAuxClick={(tabId, button) => { panel.tabAuxClick?.(sessionId, tabId, button) }}
           renderTabMenuItems={(tab, dismiss) =>
             renderSlot('sidebar.right.tab.menu.item', { tab, dismiss })}
           chrome={<PanelChrome
@@ -367,10 +382,10 @@ function SidebarPanel(panel: PanelProps & { width: number; panelRef: RefObject<H
  */
 export function RightbarSeat({
   sessionId, width, viewportWidth, canShow, useStore, actions, t, renderSlot, syncPresentation, measureRoom, reportAutoFullscreen,
-  openTab, closeTab, useTabTypes, useTabNavigation, occurrence, retainTab, active, useShortcuts,
-  splitPane, toggleFullscreen, usePopouts, popout,
+  openTab, closeTab, closePane, useTabTypes, useTabNavigation, occurrence, retainTab, active, useShortcuts,
+  splitPane, toggleFullscreen, usePaneTargets, floatTab, tabAuxClick, paneReleased, paneElement,
 }: RightbarSeatProps): ReactNode {
-  const windows = usePopouts(value => value)
+  const windows = usePaneTargets(value => value)
   // One store instance per session, so this map holds this session's surface.
   const shortcuts = useShortcuts(entries => entries)
   const surface = useStore(state => state.bySession[sessionId])
@@ -434,8 +449,9 @@ export function RightbarSeat({
 
   if (surface === undefined) return null
   const panel: PanelProps = {
-    sessionId, actions, t, renderSlot, surface, openTab, closeTab, useTabTypes, useTabNavigation, useStore, occurrence,
-    fullscreen, autoFullscreen, reportRoom, active, retainTab, shortcuts, splitPane, toggleFullscreen, windows, popout,
+    sessionId, actions, t, renderSlot, surface, openTab, closeTab, closePane, useTabTypes, useTabNavigation, useStore, occurrence,
+    fullscreen, autoFullscreen, reportRoom, active, retainTab, shortcuts, splitPane, toggleFullscreen,
+    windows, floatTab, tabAuxClick, paneReleased, paneElement,
   }
   return <SidebarPanel {...panel} width={width} panelRef={panelRef} />
 }

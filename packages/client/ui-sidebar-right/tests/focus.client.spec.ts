@@ -171,7 +171,7 @@ describe('sidebar focus targets', () => {
     h.controller.openTabFromTarget('terminal', floating)
     expect(Object.values(h.layout().tabs).filter(tab => tab.kind === 'terminal')).toHaveLength(3)
     expect(h.layout().tabs[terminals[0]!.id]).toBeDefined()
-    expect(getPane(h.layout(), floating.paneId).tabs).toHaveLength(1)
+    expect(getPane(h.layout(), floating.paneId).tabs).toHaveLength(2)
   })
 
   it('shares split availability and fullscreen behavior while preserving floating pages', () => {

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * What `ctx.sidebarRight` promises other plugins.
  *
@@ -791,4 +792,189 @@ it('releases close handlers without a stale disposer removing a replacement', ()
   h.controller.openTab('guide', { replaceTab: tabId, revealIfOpened: false })
   expect(h.layout().tabs[tabId]).toBeUndefined()
   expect(second).toHaveBeenCalledOnce()
+})
+
+
+describe('pane extension lifecycle and placement policy', () => {
+  it('dispatches auxiliary gestures through native eligibility and removes the plugin handler on unload', () => {
+    const h = harness()
+    h.expand(); h.publish()
+    const guide = h.tabOf('seed')
+    const handler = vi.fn()
+    const release = h.controller.registerTabAuxClickHandler(handler)
+    h.controller.requestTabAuxClick(SESSION, guide, 1)
+    expect(handler).not.toHaveBeenCalled()
+    h.controller.openResource('dsh-resource://file/session/s-test/a.txt')
+    const id = h.tabOf('a.txt')
+    h.controller.requestTabAuxClick(SESSION, id, 2)
+    h.controller.requestTabAuxClick('missing' as SessionId, id, 1)
+    expect(handler).not.toHaveBeenCalled()
+    h.controller.requestTabAuxClick(SESSION, id, 1)
+    expect(handler).toHaveBeenCalledExactlyOnceWith(SESSION, id, 1)
+    release()
+    h.controller.requestTabAuxClick(SESSION, id, 1)
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(h.layout().tabs[id]).toBeDefined()
+  })
+
+  it('contains a failing auxiliary gesture without closing the tab', () => {
+    const h = harness()
+    h.expand(); h.publish()
+    h.controller.openResource('dsh-resource://file/session/s-test/a.txt')
+    const id = h.tabOf('a.txt')
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const release = h.controller.registerTabAuxClickHandler(() => { throw new Error('cleanup failed') })
+      expect(() => { h.controller.requestTabAuxClick(SESSION, id, 1) }).not.toThrow()
+      expect(h.layout().tabs[id]).toBeDefined()
+      expect(error).toHaveBeenCalledOnce()
+      release()
+    } finally { error.mockRestore() }
+  })
+
+  it('delegates floating only while registered and returns to native behavior on unload', () => {
+    const h = harness()
+    h.expand(); h.publish()
+    h.controller.openResource('dsh-resource://file/session/s-test/a.txt')
+    const id = h.tabOf('a.txt')
+    const handler = vi.fn(() => true)
+    const release = h.controller.registerFloatHandler(handler)
+    h.controller.requestFloat(SESSION, id)
+    expect(handler).toHaveBeenCalledWith(SESSION, id, undefined)
+    expect(findTabPane(h.layout(), id).host).toBe('dock')
+    release()
+    h.controller.requestFloat(SESSION, id)
+    expect(findTabPane(h.layout(), id).host).toBe('float')
+  })
+
+  it('uses policy before the implicit source pane, preserves explicit priority, and forgets unloaded policies', () => {
+    const h = harness()
+    h.expand(); h.publish()
+    h.controller.openResource('dsh-resource://file/session/s-test/source.txt')
+    const id = h.tabOf('source.txt')
+    const sourcePane = findTabPane(h.layout(), id).id
+    const other = h.controller.split()!
+    const source = { tabId: id, paneId: sourcePane, occurrenceId: h.controller.tabDomain.occurrence(SESSION, { id }).id }
+    const resolver = vi.fn(() => ({ paneId: other, revealScope: 'pane' as const }))
+    const release = h.controller.registerResourcePlacementResolver(resolver)
+    h.controller.openResourceIn(SESSION, 'dsh-resource://file/session/s-test/a.txt', { source })
+    expect(findTabPane(h.layout(), h.tabOf('a.txt')).id).toBe(other)
+    h.controller.openResourceIn(SESSION, 'dsh-resource://file/session/s-test/b.txt', { source, paneId: sourcePane })
+    expect(findTabPane(h.layout(), h.tabOf('b.txt')).id).toBe(sourcePane)
+    expect(resolver).toHaveBeenCalledTimes(1)
+    release()
+    h.controller.openResourceIn(SESSION, 'dsh-resource://file/session/s-test/c.txt', { source })
+    expect(findTabPane(h.layout(), h.tabOf('c.txt')).id).toBe(sourcePane)
+  })
+
+  it('rejects stale source occurrences and missing explicit pane identities without fallback', () => {
+    const h = harness()
+    h.expand(); h.publish()
+    h.controller.openResource('dsh-resource://file/session/s-test/source.txt')
+    const id = h.tabOf('source.txt')
+    const source = { tabId: id, paneId: findTabPane(h.layout(), id).id,
+      occurrenceId: h.controller.tabDomain.occurrence(SESSION, { id }).id }
+    h.controller.close(id)
+    h.controller._undo()
+    const before = Object.keys(h.layout().tabs)
+    h.controller.openResourceIn(SESSION, 'dsh-resource://file/session/s-test/stale.txt', { source })
+    h.controller.openResource('dsh-resource://file/session/s-test/missing.txt', { paneId: 'pane9999' as PaneId })
+    expect(Object.keys(h.layout().tabs)).toEqual(before)
+  })
+
+  it('reuses resources only inside the requested pane when revealScope is pane', () => {
+    const h = harness()
+    h.expand(); h.publish()
+    h.controller.openResource('dsh-resource://file/session/s-test/a.txt')
+    const original = h.tabOf('a.txt')
+    const other = h.controller.split()!
+    h.controller.openResource('dsh-resource://file/session/s-test/a.txt', { paneId: other, revealScope: 'pane' })
+    const copy = h.controller.active()!
+    expect(copy.id).not.toBe(original)
+    expect(findTabPane(h.layout(), copy.id).id).toBe(other)
+    h.controller.openResource('dsh-resource://file/session/s-test/a.txt', { paneId: other, revealScope: 'pane' })
+    expect(h.controller.active()?.id).toBe(copy.id)
+    expect(Object.values(h.layout().tabs).filter(tab => tab.title === 'a.txt')).toHaveLength(2)
+  })
+
+  it('requires live floating panes and acknowledges DOM return before release settles', async () => {
+    const h = harness()
+    h.expand(); h.publish()
+    h.controller.openResource('dsh-resource://file/session/s-test/a.txt')
+    const id = h.tabOf('a.txt')
+    const dock = findTabPane(h.layout(), id).id
+    const target = document.createElement('div')
+    expect(() => h.controller.attachPaneTarget(SESSION, dock, target)).toThrow('floating pane')
+    const paneId = h.controller.floatIn(SESSION, id)!
+    const paneElement = document.createElement('section')
+    target.append(paneElement)
+    h.controller.paneElement(SESSION, paneId, paneElement)
+    const attachment = h.controller.attachPaneTarget(SESSION, paneId, target)
+    expect(h.controller.panes.getSnapshot().find(pane => pane.paneId === paneId)?.external).toBe(true)
+    expect(h.controller.panes.getSnapshot().at(-1)?.paneId).toBe(paneId)
+    let returned = false
+    const pending = attachment.release().then(() => { returned = true })
+    await Promise.resolve()
+    expect(returned).toBe(false)
+    expect(h.controller.paneTargets.getSnapshot().size).toBe(0)
+    h.controller.paneReleased(SESSION, paneId, document.createElement('div'))
+    await Promise.resolve()
+    expect(returned).toBe(false)
+    h.controller.paneReleased(SESSION, paneId, target)
+    await pending
+    expect(returned).toBe(true)
+    expect(attachment.release()).toBeInstanceOf(Promise)
+  })
+})
+
+
+it('reports native close eligibility for the sole guide and floating tabs', () => {
+  const h = harness()
+  h.expand(); h.publish()
+  const guide = h.tabOf('seed')
+  expect(h.controller.canCloseIn(SESSION, guide)).toBe(false)
+  h.controller.floatIn(SESSION, guide)
+  expect(h.controller.canCloseIn(SESSION, guide)).toBe(true)
+  expect(h.controller.canCloseIn('unadopted' as SessionId, guide)).toBe(false)
+})
+
+
+it('cleans every group resource before one atomic removal and preserves the group on cleanup failure', () => {
+  const h = harness()
+  h.expand(); h.publish()
+  h.controller.openResource('dsh-resource://file/session/s-test/a.txt')
+  const first = h.tabOf('a.txt')
+  const paneId = h.controller.floatIn(SESSION, first)!
+  h.controller.openResource('dsh-resource://file/session/s-test/b.txt', { paneId })
+  const before = h.entries()
+  const cleanup = vi.fn((_sessionId: SessionId, tab: { title: string }) => {
+    if (tab.title === 'b.txt') throw new Error('cannot release')
+  })
+  const unregister = h.controller.registerCloseHandler('text', cleanup)
+  expect(() => { h.controller.closePaneIn(SESSION, paneId) }).toThrow('cannot release')
+  expect(getPane(h.layout(), paneId).tabs).toHaveLength(2)
+  expect(h.entries()).toBe(before)
+  expect(cleanup).toHaveBeenCalledTimes(2)
+  unregister()
+  h.controller.closePaneIn(SESSION, paneId)
+  expect(h.layout().floats).not.toContain(paneId)
+  expect(h.entries()).toBe(before + 1)
+})
+
+it('docks every tab in a group when its first page merges with an existing docked page', () => {
+  const h = harness()
+  h.expand(); h.publish()
+  const source = h.tabOf('seed')
+  const paneId = h.controller.floatIn(SESSION, source)!
+  h.controller.openResource('dsh-resource://file/session/s-test/a.txt', { paneId })
+  const file = h.tabOf('a.txt')
+  const before = h.entries()
+  h.controller.dockIn(SESSION, paneId)
+  expect(h.layout().tabs[source]).toBeUndefined()
+  expect(h.layout().tabs[file]).toBeDefined()
+  expect(findTabPane(h.layout(), file).host).toBe('dock')
+  expect(h.layout().floats).toHaveLength(0)
+  expect(h.entries()).toBe(before + 1)
+  h.controller._undo()
+  expect(getPane(h.layout(), paneId).tabs).toEqual([source, file])
 })

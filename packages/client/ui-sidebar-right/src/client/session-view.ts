@@ -14,6 +14,7 @@ export class SidebarSessionView {
   /** Session reference released exclusively by this View. */
   readonly reference: SessionReference
   private readonly tabs = new Map<TabId, number>()
+  private leases = 0
   private mounts = 0
   private retired = false
   private disposed = false
@@ -38,7 +39,22 @@ export class SidebarSessionView {
 
   /** Whether an initialized retained body still needs this view. */
   get hasRetainedTabs(): boolean {
-    return this.tabs.size > 0
+    return this.tabs.size > 0 || this.leases > 0
+  }
+
+  /** Hold this rendered view independently of any particular tab.
+   * @returns idempotent lease release.
+   */
+  retain(): () => void {
+    if (this.disposed || this.retired) throw new Error('Sidebar Session view is retired')
+    this.leases += 1
+    let held = true
+    return () => {
+      if (!held) return
+      held = false
+      this.leases -= 1
+      this.onTabRelease(this)
+    }
   }
 
   /**

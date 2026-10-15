@@ -126,7 +126,7 @@ export interface SidebarRightTabNavigation {
   readonly revision: number
 }
 
-/** Where an open from a tab lands. Without any of these it lands in the pane holding the tab at call time. */
+/** Placement options for a tab action; resource policies run before the implicit source-pane default. */
 export interface SidebarRightTabPlacement {
   /** Land a new tab in this pane instead. */
   readonly paneId?: PaneId
@@ -134,6 +134,8 @@ export interface SidebarRightTabPlacement {
   readonly preferNewPane?: boolean
   /** Resource tabs reveal existing content by default; `false` permits duplicates. Pages always deduplicate within the target pane. */
   readonly revealIfOpened?: boolean
+  /** Limit resource reuse to the destination pane instead of the whole Session. */
+  readonly revealScope?: 'pane' | 'session'
   /** `true` opens in this tab's place — its pane and strip slot — and closes this tab in the same step. */
   readonly replaceTab?: boolean
 }

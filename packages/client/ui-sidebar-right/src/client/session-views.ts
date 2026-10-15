@@ -1,7 +1,6 @@
 /** Selection and retention policy for independently owned Sidebar Session views. */
 import type { ISessions, SessionReference } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { TabId } from '@deepseek-ai/dsh-client-ui-dockkit'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { SidebarSessionView } from './session-view.ts'
 
@@ -20,7 +19,6 @@ export class SidebarSessionViews {
   readonly source = createSnapshotStore<readonly SidebarSessionViewSnapshot[]>([])
   private readonly views = new Map<SessionId, SidebarSessionView>()
   private readonly viewsByReference = new Map<SessionReference, SidebarSessionView>()
-  private readonly pinned = new Map<string, () => void>()
   private selected: SessionId | undefined
   private closed = false
 
@@ -58,28 +56,19 @@ export class SidebarSessionViews {
     return view.mount()
   }
 
-  /**
-   * Hold the source Session's rendered View while one of its detached tabs is locked.
-   * @param sessionId - owning Session identity.
-   * @param tabId - detached tab occurrence.
-   * @param pinned - whether the tab retains its source view.
+  /** Hold an existing Session view until the caller releases its lease.
+   * @param sessionId - currently owned view.
+   * @returns idempotent lease release.
    */
-  pin(sessionId: SessionId, tabId: TabId, pinned: boolean): void {
-    const key = `${sessionId}:${tabId}`
-    if (pinned && !this.pinned.has(key)) {
-      const view = this.views.get(sessionId)
-      if (view !== undefined) this.pinned.set(key, view.retainTab(tabId, new AbortController().signal))
-    } else if (!pinned) {
-      this.pinned.get(key)?.()
-      this.pinned.delete(key)
-    }
+  retain(sessionId: SessionId): () => void {
+    const view = this.views.get(sessionId)
+    if (view === undefined) throw new Error('Sidebar Session view is not owned')
+    return view.retain()
   }
 
   /** Plugin shutdown releases every view, including any awaiting a React unmount. */
   dispose(): void {
     this.closed = true
-    for (const release of this.pinned.values()) release()
-    this.pinned.clear()
     this.views.clear()
     this.source.set([])
     for (const view of this.viewsByReference.values()) view.dispose()

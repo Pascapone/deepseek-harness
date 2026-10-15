@@ -56,6 +56,8 @@ export type { SidebarRightState, SurfaceState } from './stores.ts'
 export type {
   ISidebarRight, SidebarRightOpenResourceOptions, SidebarRightOpenTabOptions,
   SidebarRightPlacement, SidebarRightCloseHandler, SurfaceActions,
+  SidebarRightPaneInfo, SidebarRightPaneAttachment, SidebarRightResourceSource,
+  SidebarRightResourcePlacementRequest, SidebarRightResourcePlacementResolver,
 } from './service.ts'
 export type {
   SidebarRightGuideBox, SidebarRightGuideEntry, SidebarRightTabClaim, SidebarRightTabDefinition,
@@ -113,7 +115,6 @@ export function apply(ctx: ClientContext): void {
     const current = ctx.uiSession.adapter.current
     const sync = (): void => {
       const selected = current.getSnapshot().key as SessionId | undefined
-      controller.activateWindows(selected)
       views.select(selected)
     }
     const unsubscribe = current.subscribe(sync)
@@ -132,7 +133,7 @@ export function apply(ctx: ClientContext): void {
       openWithFocus: (sessionId, open) => { openWithPaneFocus(document, sessionId, open) },
       closeWithFocus: (sessionId, paneId, close) => { closeWithPaneFocus(document, sessionId, paneId, close) },
     },
-    (sessionId, tabId, pinned) => { views.pin(sessionId, tabId, pinned) },
+    sessionId => views.retain(sessionId),
   )
   ctx.effect(syncRetainedViews, 'ui-sidebar-right: retained Session views')
   // The Session on screen: the selected one while the Conversation fills the
@@ -191,8 +192,11 @@ export function apply(ctx: ClientContext): void {
         } }
       },
     }
-    const injected: Omit<SidebarRightInjected, 'keyedHooks' | 'occurrence' | 'closeTab' | 'measureRoom'> = {
-      popout: (tabId, rect) => controller.popout(tabId, rect),
+    const injected: Omit<SidebarRightInjected, 'keyedHooks' | 'occurrence' | 'closeTab' | 'closePane' | 'measureRoom'> = {
+      floatTab: (sessionId, tabId, rect) => { controller.requestFloat(sessionId, tabId, rect) },
+      tabAuxClick: (sessionId, tabId, button) => { controller.requestTabAuxClick(sessionId, tabId, button) },
+      paneReleased: (sessionId, paneId, target) => { controller.paneReleased(sessionId, paneId, target) },
+      paneElement: (sessionId, paneId, element) => { controller.paneElement(sessionId, paneId, element) },
       syncPresentation({ shown, track, fullscreen }) {
         if (shown) layout.openRightbar(track, fullscreen)
         else layout.closeRightbar()
@@ -202,7 +206,7 @@ export function apply(ctx: ClientContext): void {
       toggleFullscreen: () => { const target = controller.commandTarget(); if (target !== undefined) controller.toggleFullscreen(target) },
       openTab: (kind, options) => { controller.openTab(kind, options) },
       hooks: {
-        popouts: controller.popouts,
+        paneTargets: controller.paneTargets,
         shortcuts: ctx.shortcuts.catalog,
         tabTypes: { subscribe: listener => tabs.subscribe(listener), getSnapshot: () => tabs.entries() },
       },
@@ -235,6 +239,10 @@ export function apply(ctx: ClientContext): void {
           closeTab: (tabId) => {
             try { controller.closeIn(sessionId, tabId) }
             catch (error) { console.error('Sidebar tab close failed:', error) }
+          },
+          closePane: (paneId) => {
+            try { controller.closePaneIn(sessionId, paneId) }
+            catch (error) { console.error('Sidebar pane close failed:', error) }
           },
           keyedHooks: { tabNavigation: key => controller.tabDomain.occurrence(sessionId, { id: key as TabId }).navigation },
           occurrence: tab => controller.tabDomain.occurrence(sessionId, tab),

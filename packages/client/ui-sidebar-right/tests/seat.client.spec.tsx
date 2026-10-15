@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /** Sidebar presentation and tab subscriptions through the production slot renderer. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, fireEvent, waitFor } from '@testing-library/react'
+import { act, fireEvent } from '@testing-library/react'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { SlotTestRuntime, type SlotView } from '@deepseek-ai/dsh-client-test-runtime'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
@@ -10,7 +10,7 @@ import type { ShortcutCatalogEntry, ShortcutCommandId } from '@deepseek-ai/dsh-c
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { PaneId, SplitId, TabId } from '@deepseek-ai/dsh-client-ui-dockkit'
-import { dockPaneIds, getPane } from '@deepseek-ai/dsh-client-ui-dockkit'
+import { dockPaneIds, findTabPane, getPane } from '@deepseek-ai/dsh-client-ui-dockkit'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { apply, inject } from '../src/client/index.ts'
 import { intentsFor } from '../src/client/shell/SidebarRight.tsx'
@@ -195,7 +195,7 @@ it('keeps duplicate Session Tabs independent and preserves a body through dockin
   act(() => { h.controller.close(duplicate.id) })
   act(() => { h.controller.float(tab.id) })
   expect(document.querySelector('[data-page-input]')).toBe(body)
-  expect(body.closest('[data-dockkit-host]')).toBe(cell)
+  expect(body.closest('[data-dockkit-float]')).not.toBeNull()
   const floating = h.controller.focusedTarget(body)!
   expect(floating.host).toBe('float')
   act(() => { h.actions.setExpanded(SESSION, false) })
@@ -532,7 +532,7 @@ describe('RightbarSeat presentation', () => {
     const floating = h.open('floating.txt')
     act(() => { h.controller.float(floating.id) })
     const paneId = getPane(h.layout(), h.layout().floats[0]!).id
-    expect(h.view.container.querySelector('[data-dockkit-tab-close]')).toBeNull()
+    expect(h.view.container.querySelector('[data-dockkit-host="dock"] [data-dockkit-tab-close]')).toBeNull()
     const close = document.querySelector<HTMLButtonElement>(`[data-dockkit-float-close="${paneId}"]`)
     expect(close).not.toBeNull()
 
@@ -1029,334 +1029,30 @@ describe('intentsFor — the kit\'s gestures as one session\'s store actions', (
   })
 })
 
-it('parks detached tabs on session switch and restores their saved screen bounds', async () => {
-  const h = await mountSeat()
-  const tab = h.open('window.txt')
-  const body = element(h.view.container, `[data-tab-body="${tab.id}"]`)
-  const popups: { target: HTMLElement; popup: Window }[] = []
-  const open = vi.fn((..._args: unknown[]) => {
-    const target = document.createElement('div')
-    document.body.append(target)
-    const popup = Object.assign(new EventTarget() as Window, {
-      document: { body: target, title: '' }, focus: vi.fn(),
-      screenX: 112, screenY: 218, outerWidth: 730, outerHeight: 590,
-      closed: false, close() { this.closed = true },
-    })
-    popups.push({ target, popup })
-    return popup
-  })
-  const release = h.controller.registerWindowOpener(open)
-  try {
-    act(() => { expect(h.controller.popout(tab.id)).toBe(true) })
-    expect(popups[0]!.target.querySelector(`[data-tab-body="${tab.id}"]`)).toBe(body)
-    expect(h.layout().floats).toHaveLength(1)
-    await act(async () => { await h.runtime.sessions.add({ id: OTHER }) })
-    act(() => { h.selectSession(OTHER) })
-    expect(h.controller.popouts.getSnapshot().has(`${SESSION}:${tab.id}`)).toBe(true)
-    expect(h.controller.popouts.getSnapshot().get(`${SESSION}:${tab.id}`)).toBeUndefined()
-    expect(popups[0]!.target.querySelector('[data-dockkit-content]')).toBeNull()
-    await waitFor(() => { expect(popups[0]!.popup.closed).toBe(true) })
-    expect(h.layout().floats).toHaveLength(1)
-    act(() => { h.selectSession(SESSION) })
-    await waitFor(() => { expect(open).toHaveBeenCalledTimes(2) })
-    expect(open.mock.calls[1]![1]).toEqual({ x: 112, y: 218, width: 730, height: 590 })
-    expect(popups[1]!.target.querySelector(`[data-tab-body="${tab.id}"]`)).toBe(body)
-    fireEvent.click(element(popups[1]!.target, '[data-dockkit-float-dock]'))
-    await waitFor(() => { expect(popups[1]!.popup.closed).toBe(true) })
-    expect(h.controller.popouts.getSnapshot().size).toBe(0)
-    expect(element(h.view.container, `[data-tab-body="${tab.id}"]`)).not.toBeNull()
-  } finally {
-    release()
-    for (const { target } of popups) target.remove()
-  }
-})
 
-it('copies an existing tab into another Session without moving its source', async () => {
-  const h = await mountSeat()
-  const original = h.open('copied.txt')
-  await act(async () => { await h.runtime.sessions.add({ id: OTHER }) })
-  act(() => { h.selectSession(OTHER) })
-  let copy: TabId | undefined
-  act(() => { copy = h.controller.copyToMounted(original) })
-  expect(Object.values(h.layout().tabs).some(tab => tab.id === copy && tab.contentId === original.contentId)).toBe(true)
-  act(() => { h.selectSession(SESSION) })
-  expect(h.layout().tabs[original.id]).toEqual(original)
-})
 
-it('keeps a locked satellite and its original tab alive through a session switch', async () => {
-  const h = await mountSeat()
-  const tab = h.open('locked.txt')
-  const target = document.createElement('div')
-  document.body.append(target)
-  const popup = Object.assign(new EventTarget() as Window, {
-    document: { body: target }, closed: false,
-    screenX: 20, screenY: 20, outerWidth: 800, outerHeight: 600,
-    focus() {}, close() { this.closed = true },
-  })
-  const release = h.controller.registerWindowOpener(() => popup)
-  try {
-    act(() => { h.controller.popout(tab.id); h.controller.setPinned(SESSION, tab.id, true) })
-    await act(async () => { await h.runtime.sessions.add({ id: OTHER }) })
-    act(() => { h.selectSession(OTHER) })
-    expect(popup.closed).toBe(false)
-    expect(target.querySelector(`[data-tab-body="${tab.id}"]`)).not.toBeNull()
-    expect(h.controller.popouts.getSnapshot().get(`${SESSION}:${tab.id}`)).toBe(target)
-    act(() => { h.controller.setPinned(SESSION, tab.id, false) })
-    await waitFor(() => { expect(popup.closed).toBe(true) })
-    expect(h.controller.popouts.getSnapshot().has(`${SESSION}:${tab.id}`)).toBe(true)
-    act(() => { h.selectSession(SESSION) })
-    expect(h.layout().tabs[tab.id]).toBeDefined()
-  } finally {
-    release()
-    target.remove()
-  }
-})
-
-it('switches several satellites in both directions without mixing sessions', async () => {
+it('returns a grouped external pane before acknowledging release and keeps its second tab after first close', async () => {
   const h = await mountSeat()
   const first = h.open('first.txt')
-  const second = h.open('second.txt')
-  const windows: { target: HTMLElement; popup: Window }[] = []
-  const release = h.controller.registerWindowOpener(() => {
-    const target = document.createElement('div')
-    document.body.append(target)
-    const popup = Object.assign(new EventTarget() as Window, {
-      document: { body: target }, screenX: 42, screenY: 60, outerWidth: 800, outerHeight: 600,
-      closed: false, focus() {}, close() { this.closed = true },
-    })
-    windows.push({ target, popup })
-    return popup
-  })
-  try {
-    act(() => { h.controller.popout(first.id); h.controller.popout(second.id) })
-    expect(h.controller.popouts.getSnapshot().size).toBe(2)
-    await act(async () => { await h.runtime.sessions.add({ id: OTHER }) })
-    act(() => { h.selectSession(OTHER) })
-    await waitFor(() => { expect(windows.slice(0, 2).every(entry => entry.popup.closed)).toBe(true) })
-    expect([...h.controller.popouts.getSnapshot().values()].filter(Boolean)).toHaveLength(0)
-    act(() => { h.controller.openResource('dsh-resource://file/session/s-other/third.txt') })
-    const other = h.controller.active()!.id
-    act(() => { h.controller.popout(other) })
-    expect([...h.controller.popouts.getSnapshot().values()].filter(Boolean)).toHaveLength(1)
-    act(() => { h.selectSession(SESSION) })
-    await waitFor(() => { expect([...h.controller.popouts.getSnapshot().values()].filter(Boolean)).toHaveLength(2) })
-    expect(windows[2]!.popup.closed).toBe(true)
-    expect(h.controller.popouts.getSnapshot().has(`${SESSION}:${first.id}`)).toBe(true)
-    expect(h.controller.popouts.getSnapshot().has(`${SESSION}:${second.id}`)).toBe(true)
-    act(() => { h.selectSession(OTHER) })
-    await waitFor(() => { expect(h.controller.popouts.getSnapshot().has(`${OTHER}:${other}`)).toBe(true) })
-    expect([...h.controller.popouts.getSnapshot().values()].filter(Boolean)).toHaveLength(1)
-  } finally {
-    release()
-    for (const { target } of windows) target.remove()
-  }
-})
-
-it('retains blocked restorations and retries them without docking', async () => {
-  const h = await mountSeat()
-  const tab = h.open('retry.txt')
-  const body = element(h.view.container, `[data-tab-body="${tab.id}"]`)
-  const targets: HTMLElement[] = []
-  let attempts = 0
-  const open = vi.fn((..._args: unknown[]) => {
-    attempts += 1
-    if (attempts === 2) return null
-    const target = document.createElement('div')
-    document.body.append(target)
-    targets.push(target)
-    return Object.assign(new EventTarget() as Window, {
-      document: { body: target }, screenX: -260, screenY: 77, outerWidth: 810, outerHeight: 620,
-      closed: false, focus() {}, close() { this.closed = true },
-    })
-  })
-  const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
-  const release = h.controller.registerWindowOpener(open)
-  try {
-    act(() => { h.controller.popout(tab.id) })
-    await act(async () => { await h.runtime.sessions.add({ id: OTHER }) })
-    act(() => { h.selectSession(OTHER) })
-    act(() => { h.selectSession(SESSION) })
-    expect(open).toHaveBeenCalledTimes(2)
-    expect(warning).toHaveBeenCalledOnce()
-    expect(h.controller.popouts.getSnapshot().has(`${SESSION}:${tab.id}`)).toBe(true)
-    expect(h.controller.popouts.getSnapshot().get(`${SESSION}:${tab.id}`)).toBeUndefined()
-    expect(h.layout().floats).toHaveLength(1)
-    act(() => { expect(h.controller.popout(tab.id)).toBe(true) })
-    expect(open.mock.calls[2]![1]).toEqual({ x: -260, y: 77, width: 810, height: 620 })
-    expect(targets[1]!.querySelector(`[data-tab-body="${tab.id}"]`)).toBe(body)
-  } finally {
-    release()
-    warning.mockRestore()
-    for (const target of targets) target.remove()
-  }
-})
-
-it('keeps a Start-selected module in the same satellite, then removes it on native close', async () => {
-  const h = await mountSeat(1440, true, 1)
-  act(() => { h.controller.openTab('guide') })
-  const guide = Object.values(h.layout().tabs).find(tab => tab.kind === 'guide')!
+  let paneId: PaneId | undefined
+  act(() => { paneId = h.controller.floatIn(SESSION, first.id) })
   const target = document.createElement('div')
   document.body.append(target)
-  const popup = Object.assign(new EventTarget() as Window, {
-    document: { body: target, title: 'Start — DSH' }, focus: vi.fn(),
-    closed: false, close() { this.closed = true },
-  })
-  const release = h.controller.registerWindowOpener(() => popup)
-  try {
-    act(() => { expect(h.controller.popout(guide.id)).toBe(true) })
-    const pane = h.layout().floats[0]
-    fireEvent.click(element(target, '[data-sidebar-right-guide-entry="text"]'))
-    const module = h.controller.active()!
-    expect(module.kind).toBe('text')
-    expect(h.layout().floats).toContain(pane)
-    expect(h.layout().tabs[guide.id]).toBeUndefined()
-    expect(h.controller.popouts.getSnapshot().get(`${SESSION}:${module.id}`)).toBe(target)
-    expect(target.querySelector('[data-dockkit-content]')?.getAttribute('data-dockkit-content')).toBe(module.id)
-    expect(target.querySelector(`[data-tab-body="${module.id}"]`)).not.toBeNull()
-    expect(popup.document.title).toBe(`${module.title} — DSH`)
-    act(() => { popup.dispatchEvent(new Event('pagehide')) })
-    expect(h.layout().floats).toHaveLength(0)
-    expect(h.layout().tabs[module.id]).toBeUndefined()
-    expect(h.controller.popouts.getSnapshot().size).toBe(0)
-  } finally { release(); target.remove() }
-})
-
-it('preserves the same tab DOM when returning from the satellite', async () => {
-  const h = await mountSeat()
-  const tab = h.open('draft.txt')
-  const body = element(h.view.container, `[data-tab-body="${tab.id}"]`)
-  const target = document.createElement('div')
-  document.body.append(target)
-  const popup = Object.assign(new EventTarget() as Window, {
-    document: { body: target }, closed: false, focus: vi.fn(), close: vi.fn(),
-  })
-  const release = h.controller.registerWindowOpener(() => popup)
-  try {
-    act(() => { h.controller.popout(tab.id) })
-    expect(element(target, `[data-tab-body="${tab.id}"]`)).toBe(body)
-    fireEvent.click(element(target, '[data-dockkit-float-dock]'))
-    expect(element(h.view.container, `[data-tab-body="${tab.id}"]`)).toBe(body)
-    await waitFor(() => { expect(popup.close).toHaveBeenCalledTimes(1) })
-  } finally {
-    release()
-    target.remove()
-  }
-})
-
-it('removes a popout when its native window closes, and leaves blocked popups docked', async () => {
-  const h = await mountSeat()
-  const tab = h.open('recover.txt')
-  const blocked = h.controller.registerWindowOpener(() => null)
-  expect(h.controller.popout(tab.id)).toBe(false)
-  expect(h.layout().floats).toHaveLength(0)
-  blocked()
-  const target = document.createElement('div')
-  document.body.append(target)
-  const popup = Object.assign(new EventTarget() as Window, {
-    document: { body: target }, closed: false, focus: vi.fn(), close: vi.fn(),
-  })
-  const close = vi.fn()
-  const stop = h.controller.registerCloseHandler('text', close)
-  const release = h.controller.registerWindowOpener(() => popup)
-  try {
-    act(() => { h.controller.popout(tab.id) })
-    expect(h.layout().floats).toHaveLength(1)
-    act(() => { popup.dispatchEvent(new Event('pagehide')) })
-    expect(h.layout().floats).toHaveLength(0)
-    expect(h.layout().tabs[tab.id]).toBeUndefined()
-    expect(h.controller.popouts.getSnapshot().size).toBe(0)
-    expect(close).toHaveBeenCalledOnce()
-    expect(close).toHaveBeenCalledWith(SESSION, tab)
-  } finally {
-    release()
-    stop()
-    target.remove()
-  }
-})
-
-it('keeps the tab accessible if native close cleanup fails', async () => {
-  const h = await mountSeat()
-  const tab = h.open('cleanup.txt')
-  const body = element(h.view.container, `[data-tab-body="${tab.id}"]`)
-  const target = document.createElement('div')
-  document.body.append(target)
-  const popup = Object.assign(new EventTarget() as Window, {
-    document: { body: target }, closed: false, focus() {}, close() { this.closed = true },
-  })
-  const failure = new Error('cleanup failed')
-  const stop = h.controller.registerCloseHandler('text', () => { throw failure })
-  const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
-  const release = h.controller.registerWindowOpener(() => popup)
-  try {
-    act(() => { h.controller.popout(tab.id) })
-    act(() => { popup.dispatchEvent(new Event('pagehide')) })
-    expect(logged).toHaveBeenCalledWith('Sidebar tab close failed:', failure)
-    expect(h.layout().tabs[tab.id]).toBeDefined()
-    expect(h.layout().floats).toHaveLength(1)
-    expect(h.controller.popouts.getSnapshot().size).toBe(0)
-    expect(element(h.view.container, `[data-tab-body="${tab.id}"]`)).toBe(body)
-  } finally {
-    stop()
-    logged.mockRestore()
-    release()
-    target.remove()
-  }
-})
-
-it('closes a popup found closed during session switch rather than parking it', async () => {
-  const h = await mountSeat()
-  const tab = h.open('already-closed.txt')
-  const target = document.createElement('div')
-  document.body.append(target)
-  const popup = Object.assign(new EventTarget() as Window, {
-    document: { body: target }, closed: false, focus() {}, close() { this.closed = true },
-  })
-  const release = h.controller.registerWindowOpener(() => popup)
-  try {
-    act(() => { h.controller.popout(tab.id) })
-    popup.close()
-    await act(async () => { await h.runtime.sessions.add({ id: OTHER }) })
-    act(() => { h.selectSession(OTHER) })
-    expect(h.layout().tabs[tab.id]).toBeUndefined()
-    expect(h.controller.popouts.getSnapshot().size).toBe(0)
-  } finally { release(); target.remove() }
-})
-
-it('closes satellites synchronously when their opener unloads', async () => {
-  const h = await mountSeat()
-  const tab = h.open('unload.txt')
-  const target = document.createElement('div')
-  document.body.append(target)
-  const popup = Object.assign(new EventTarget() as Window, {
-    document: { body: target }, closed: false, focus: vi.fn(), close: vi.fn(),
-  })
-  const release = h.controller.registerWindowOpener(() => popup)
-  try {
-    act(() => { h.controller.popout(tab.id) })
-    act(() => { window.dispatchEvent(new Event('pagehide')) })
-    expect(popup.close).toHaveBeenCalledTimes(1)
-    expect(h.controller.popouts.getSnapshot().size).toBe(0)
-  } finally {
-    release()
-    target.remove()
-  }
-})
-
-it('keeps a resource tab and reports a synchronous cleanup failure from its close button', async () => {
-  const h = await mountSeat()
-  const tab = h.open('terminal')
-  const failure = new Error('process still running')
-  const release = h.controller.registerCloseHandler('text', () => { throw failure })
-  const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
-  try {
-    fireEvent.click(element(h.view.container, `[data-dockkit-tab-close="${tab.id}"]`))
-    await expect.poll(() => logged.mock.calls).toEqual([['Sidebar tab close failed:', failure]])
-    expect(h.layout().tabs[tab.id]).toBeDefined()
-    release()
-    fireEvent.click(element(h.view.container, `[data-dockkit-tab-close="${tab.id}"]`))
-    expect(h.layout().tabs[tab.id]).toBeUndefined()
-  } finally {
-    logged.mockRestore()
-    release()
-  }
+  let attachment: ReturnType<typeof h.controller.attachPaneTarget> | undefined
+  act(() => { attachment = h.controller.attachPaneTarget(SESSION, paneId!, target) })
+  expect(target.querySelector(`[data-dockkit-float="${paneId}"]`)).not.toBeNull()
+  act(() => { h.controller.openResource('dsh-resource://file/session/s-test/second.txt', { paneId: paneId! }) })
+  const second = h.controller.active()!
+  expect(getPane(h.layout(), paneId!).tabs).toEqual([first.id, second.id])
+  act(() => { h.controller.closeIn(SESSION, first.id) })
+  expect(getPane(h.layout(), paneId!).tabs).toEqual([second.id])
+  expect(target.querySelector(`[data-dockkit-float="${paneId}"]`)).not.toBeNull()
+  let returned: Promise<void> | undefined
+  act(() => { returned = attachment!.release() })
+  await returned
+  expect(target.querySelector('[data-dockkit-float]')).toBeNull()
+  expect(h.view.container.querySelector(`[data-dockkit-float="${paneId}"]`)).not.toBeNull()
+  act(() => { h.controller.dockIn(SESSION, paneId!) })
+  expect(findTabPane(h.layout(), second.id).host).toBe('dock')
+  target.remove()
 })

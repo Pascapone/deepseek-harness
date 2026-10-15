@@ -43,7 +43,7 @@ function validateReferences(value: z.infer<typeof surface>): void {
         || Math.abs(entry.sizes.reduce((sum, size) => sum + size, 0) - 1) > 1e-9) reject()
       pending.push(...entry.children.map(id => ({ id, host })))
     } else {
-      if (entry.host !== host || (host === 'float' ? entry.rect === undefined || entry.tabs.length !== 1 : entry.rect !== undefined)) reject()
+      if (entry.host !== host || (host === 'float' ? entry.rect === undefined || entry.tabs.length === 0 : entry.rect !== undefined)) reject()
       if (entry.tabs.length === 0 ? entry.activeTabId !== undefined : !entry.tabs.includes(entry.activeTabId ?? '')) reject()
       for (const tab of entry.tabs) {
         if (usedTabs.has(tab) || layout.tabs[tab] === undefined) reject()

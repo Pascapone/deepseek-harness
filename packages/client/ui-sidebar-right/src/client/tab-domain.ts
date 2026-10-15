@@ -67,7 +67,7 @@ interface Held extends TabOccurrence {
   commands: SidebarRightTabCommands
 
   readonly controller: AbortController
-  /** The docked pane holding the record at the last sync; `undefined` while it floats or before any sync. */
+  /** The pane holding the record at the last sync; undefined before any sync. */
   paneId: PaneId | undefined
   /** Whether the resource model has been asked to hold the address. */
   pinned: boolean
@@ -104,7 +104,7 @@ export class TabDomain {
     for (const tab of Object.values(layout.tabs)) {
       const occurrence = held.get(tab.id) ?? this.hold(sessionId, tab.id, { address: tab.contentId, params: undefined, revision: 0 })
       const pane = findTabPane(layout, tab.id)
-      occurrence.paneId = pane.host === 'dock' ? pane.id : undefined
+      occurrence.paneId = pane.id
       if (occurrence.pinned) continue
       occurrence.pinned = true
       this.pin(occurrence.navigation.getSnapshot().address, occurrence.signal)
@@ -172,6 +172,7 @@ export class TabDomain {
       ...placement.paneId === undefined ? {} : { paneId: placement.paneId },
       ...placement.preferNewPane === undefined ? {} : { preferNewPane: placement.preferNewPane },
       ...placement.revealIfOpened === undefined ? {} : { revealIfOpened: placement.revealIfOpened },
+      ...placement.revealScope === undefined ? {} : { revealScope: placement.revealScope },
     })
     const held: Held = {
       id: randomUUID() as SidebarRightOccurrenceId,
@@ -195,7 +196,11 @@ export class TabDomain {
           return release
         },
         openResource: (address, options = {}) => {
-          navigator.openResourceIn(sessionId, address, { ...place(options), params: options.params })
+          if (controller.signal.aborted || held.paneId === undefined) return
+          const { replaceTab: _replace, ...explicit } = options
+          navigator.openResourceIn(sessionId, address, { ...explicit,
+            ...options.replaceTab === true ? { replaceTab: tabId } : {},
+            source: { tabId, paneId: held.paneId, occurrenceId: held.id } })
         },
         openTab: (kind, options = {}) => {
           navigator.openTabIn(sessionId, kind, { ...place(options), params: options.params })
