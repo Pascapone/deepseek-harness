@@ -36,7 +36,7 @@ it('routes native Files clicks to a picked pane and retains the complete pane ac
   const scaffold = await launchWebScaffold({
     extraOverlayPath: [fileURLToPath(new URL('./pin-browse-picker.overlay.yml', import.meta.url)), overlay],
     extraInstallAnchors: ['dsh-better-web', 'dsh-file-targets', 'dsh-markdown'].map(name => join(STACK, name, 'package.json')),
-  }).catch(async (error) => {
+  }).catch(async (error: unknown) => {
     await rm(configDir, { recursive: true, force: true })
     throw error
   })
@@ -60,7 +60,7 @@ it('routes native Files clicks to a picked pane and retains the complete pane ac
       const page = await context.newPage()
       const tripwire = watchConsole(page)
       onTestFailed(() => saveFailureShot(page, 'sidebar-pane-targets'))
-      await page.addInitScript(id => localStorage.setItem('dsh.sessions.current', JSON.stringify({ sessionId: id })), sessionId)
+      await page.addInitScript((id) => { localStorage.setItem('dsh.sessions.current', JSON.stringify({ sessionId: id })) }, sessionId)
       await page.goto(scaffold.authenticatedUrl)
       await page.locator('[data-sidebar-right-expand]').click()
       await page.locator('[data-sidebar-right-guide-entry="files"]').click()
@@ -201,6 +201,7 @@ it('routes native Files clicks to a picked pane and retains the complete pane ac
       expect(tripwire.pageErrors).toEqual([])
     } finally { await browser.close() }
   } finally {
-    await scaffold.close().finally(() => rm(configDir, { recursive: true, force: true }))
+    try { await scaffold.close() }
+    finally { await rm(configDir, { recursive: true, force: true }) }
   }
 }, 180_000)
