@@ -11,8 +11,6 @@ English | [中文](README.zh.md)
 
 This package condenses older history while preserving recent messages. Automatic pressure checks, confirmed-overflow recovery, and `/compact` share the same input accounting. Optional pruning can avoid model calls; otherwise bounded summary requests process the selected history and retain summary text. The system head remains, and tool pairs and jointly measured cost groups cannot be split.
 
-The optional `CompactionRetentionProvider` in the type-only `./retention-settings` export supplies a detached global override and accepts engine-owned synchronous validators. Settings schema, persistence, and UI belong to its provider plugin. With no provider, the engine uses its native configuration. Exact-model overrides still win; operation snapshots, accounting, capacity checks, and safe-history selection remain engine-owned.
-
 ## Table of Contents
 
 - [Use this package](#use-this-package)
@@ -131,6 +129,8 @@ Failed summary requests dispatch synchronous `compaction/summary-error` after ch
 The transaction validates the surface span and the durable lock, appends `compaction/start`, summarizes through the hook, revalidates stability (whole-surface for automatic calls, selected-span for manual calls), rejects a summary that does not shrink its source, appends `compaction/summary` plus the replacement `user/message`, and makes exactly one `compaction/end` attempt. A live unmatched start is the durable lock: an unmatched marker before a newer `session/end-seed` is stale evidence from a prior lifecycle and does not block; one after that boundary reports `busy`. A failed close deliberately leaves a blocking orphan. Cancellation remains authoritative after cleanup and durability.
 
 ### Config resolution
+
+The optional `CompactionRetentionProvider` in the type-only `./retention-settings` export supplies a detached global override and accepts engine-owned synchronous validators. Settings schema, persistence, and UI belong to its provider plugin. With no provider, the engine uses its native configuration. Exact-model overrides still win; operation snapshots, accounting, capacity checks, and safe-history selection remain engine-owned.
 
 `resolveConfig` validates defaults; `resolveTargetPolicy` snapshots global Settings retention below exact-model overrides. Mode switching removes the inactive fixed/ratio form, and owned active or cached model budgets are validated synchronously before Settings persistence. `resolveCompactSpec` uses routed capacity and the captured provider-adjusted reserve. Legacy conversation policy may estimate reserve from the header cap, adapter default, or zero; that fallback is never persisted as an actual reserve, and available space stays unknown without one. A paid default summary requires known prepared capacity and reserve.
 

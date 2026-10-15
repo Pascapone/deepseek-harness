@@ -113,10 +113,10 @@ After replacement, the backend remeasures complete input and checks the operatio
 
 ## Durable original-history retention
 
-Settings → Context & Compaction stores an explicit fixed-token, ratio, or inherited mode through the normal Host configuration path. The global choice overrides engine defaults but not an exact-model retention policy. Engines sample one immutable policy per operation, validate known model budgets before persistence, and expose the last-used policy separately from a newly saved preference. Unknown routes require capacity validation when resolved. Authenticated remote browsers persist only the approved retention namespace; they do not enable other Host settings.
+The optional `CompactionRetentionProvider`, exported only as a type from `@deepseek-ai/dsh-compaction-basic/retention-settings`, supplies global retention overrides. Its plugin owns preference schema, persistence and editor UI; without a provider, engines use their native configuration. The global choice overrides engine defaults but not an exact-model retention policy. Engines sample one immutable policy per operation, supply synchronous known-model budget validators before preference persistence, and expose the last-used policy separately from a newly saved preference. Unknown routes require capacity validation when resolved. Preference editors explicitly request their namespace through scoped Host persistence; Host authentication and authorization remain authoritative.
 
 ```ts type-equiv
-/** Explicit mode prevents a previously saved fixed budget from overriding ratio mode. */
+/** Atomic retention preference validated by its settings owner. */
 type RetentionPreference =
   | { mode: 'inherit'; value: 0 }
   | { mode: 'tokens'; value: number }
@@ -241,23 +241,23 @@ Types: [CommandId](commands.md) · [SessionSeq](session.md)
 
 Source: [`packages/compaction/compaction/src/index.ts`](../../packages/compaction/compaction/src/index.ts)
 
-<a id="ctxcompactionretention--compactionretentionsettings"></a>
+<a id="ctxcompactionretention--compactionretentionprovider"></a>
 
-### `ctx.compactionRetention` — `CompactionRetentionSettings`
+### `ctx.compactionRetention` — `CompactionRetentionProvider`
 
-Global settings owner shared by preset-scoped compaction engines.
+Settings ownership is optional; native engines own budget checks.
 
 ```ts cordis-catalog
-/** Enforce an active engine's known-model budget before any Settings or ConfigEditor write.
- * @param validate Synchronous validation; throw an actionable error to reject the entire write.
- * @returns Disposer, owned by the engine's plugin effect.
- */
-registerValidator(validate: RetentionValidator): () => void
-
-/** Read a detached override for one operation; running operations retain their snapshot.
- * @returns Only the active retention field, or neither when inheriting engine configuration.
+/** Read one detached operation snapshot.
+ * @returns Retention override, or neither field to inherit native configuration.
  */
 current(): Pick<CompactionPolicyConfig, 'retainTokens' | 'retainRatio'>
+
+/** Guard future settings writes with an active engine's known-route budget checks.
+ * @param validate Synchronous budget check; throws before persistence.
+ * @returns Disposer owned by the engine's effect.
+ */
+registerValidator(validate: RetentionValidator): () => void
 ```
 
 Source: [`packages/compaction/compaction-basic/src/retention-settings.ts`](../../packages/compaction/compaction-basic/src/retention-settings.ts)

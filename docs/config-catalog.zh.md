@@ -3585,6 +3585,8 @@ export interface Config {
   sampleOverCapGlobResults: boolean
   /** Max paths one `glob` call retains inline; later paths go to the formatted spill file. */
   globMaxResults?: number
+  /** Ignore-file handling for unfiltered workspace-root scans; specific patterns/subtrees always include ignored files. */
+  globRootIgnorePolicy?: 'include' | 'respect'
   /** Max flat matches one `grep` call retains inline; later matches go to the formatted spill file. */
   grepMaxMatches?: number
   /** Max bytes retained for one matched-line preview (the cut preserves UTF-8 boundaries). */

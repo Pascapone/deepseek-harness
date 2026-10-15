@@ -113,10 +113,10 @@ type ManualCompactionErrorCode =
 
 ## 持久化原始历史保留
 
-设置 → 上下文与压缩通过普通宿主配置路径保存明确的固定 Token、比例或继承模式。全局选择覆盖引擎默认值，但不覆盖模型专用保留策略。引擎为每次操作采样一份不可变策略，在持久化前校验已知模型预算，并将上次使用的策略与新保存的偏好区分展示。未知路由在解析时必须校验容量。经过认证的远程浏览器只持久化获准的保留命名空间，不启用其他宿主设置。
+可选的 `CompactionRetentionProvider` 仅作为类型从 `@deepseek-ai/dsh-compaction-basic/retention-settings` 导出，用于提供全局保留覆盖。其插件持有偏好 schema、持久化和编辑器 UI；没有提供方时，引擎使用原生配置。全局选择覆盖引擎默认值，但不覆盖精确模型保留策略。引擎为每次操作采样一份不可变策略，在偏好持久化前提供同步的已知模型预算校验器，并将上次使用的策略与新保存的偏好区分展示。未知路由在解析时必须校验容量。偏好编辑器通过作用域宿主持久化显式请求其命名空间；宿主认证与授权仍具有决定权。
 
 ```ts type-equiv
-/** Explicit mode prevents a previously saved fixed budget from overriding ratio mode. */
+/** Atomic retention preference validated by its settings owner. */
 type RetentionPreference =
   | { mode: 'inherit'; value: 0 }
   | { mode: 'tokens'; value: number }
@@ -241,23 +241,23 @@ Types: [CommandId](commands.zh.md) · [SessionSeq](session.zh.md)
 
 Source: [`packages/compaction/compaction/src/index.ts`](../../packages/compaction/compaction/src/index.ts)
 
-<a id="ctxcompactionretention--compactionretentionsettings"></a>
+<a id="ctxcompactionretention--compactionretentionprovider"></a>
 
-### `ctx.compactionRetention` — `CompactionRetentionSettings`
+### `ctx.compactionRetention` — `CompactionRetentionProvider`
 
-Global settings owner shared by preset-scoped compaction engines.
+Settings ownership is optional; native engines own budget checks.
 
 ```ts cordis-catalog
-/** Enforce an active engine's known-model budget before any Settings or ConfigEditor write.
- * @param validate Synchronous validation; throw an actionable error to reject the entire write.
- * @returns Disposer, owned by the engine's plugin effect.
- */
-registerValidator(validate: RetentionValidator): () => void
-
-/** Read a detached override for one operation; running operations retain their snapshot.
- * @returns Only the active retention field, or neither when inheriting engine configuration.
+/** Read one detached operation snapshot.
+ * @returns Retention override, or neither field to inherit native configuration.
  */
 current(): Pick<CompactionPolicyConfig, 'retainTokens' | 'retainRatio'>
+
+/** Guard future settings writes with an active engine's known-route budget checks.
+ * @param validate Synchronous budget check; throws before persistence.
+ * @returns Disposer owned by the engine's effect.
+ */
+registerValidator(validate: RetentionValidator): () => void
 ```
 
 Source: [`packages/compaction/compaction-basic/src/retention-settings.ts`](../../packages/compaction/compaction-basic/src/retention-settings.ts)
