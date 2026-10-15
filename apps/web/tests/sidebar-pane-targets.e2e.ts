@@ -10,7 +10,6 @@ import { acknowledgeReloadConnectionLoss, captureStableAria, compareOrRefreshGol
 import { saveFailureShot } from './support.ts'
 
 const STACK = process.env.DSH_PANE_TEST_PLUGIN_STACK
-  ?? fileURLToPath(new URL('../../../../core-plugin-boundaries-stack-20261015/', import.meta.url))
 const EXPECTED = fileURLToPath(new URL('./expected/sidebar-pane-targets/', import.meta.url))
 
 async function drag(page: Page, source: Locator, target: Locator, fraction = 0.5): Promise<void> {
@@ -26,7 +25,11 @@ function tab(page: Page, name: string): Locator {
   return page.locator('[data-dockkit-tab]').filter({ has: page.locator('[data-dockkit-tab-title]', { hasText: name }) })
 }
 
-it('routes native Files clicks to a picked pane and retains the complete pane across popup lifecycle', async () => {
+it('routes native Files clicks to a picked pane and retains the complete pane across popup lifecycle', async ({ skip }) => {
+  if (STACK === undefined) {
+    skip('Set DSH_PANE_TEST_PLUGIN_STACK to the external Better Web, File Targets and Markdown plugin stack')
+    return
+  }
   if (webSnapshotMode() === 'refresh') await mkdir(EXPECTED, { recursive: true })
   const configDir = await mkdtemp(join(tmpdir(), 'dsh-pane-target-config-'))
   const overlay = join(configDir, 'cordis.patch.yml')
