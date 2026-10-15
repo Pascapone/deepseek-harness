@@ -447,9 +447,8 @@ async function main(): Promise<void> {
       primaryRuntime,
       resources, (next) => { platformView.setSession(next) }, async (request) => {
         if (request.action === 'open') return browserGuests.openSessionCdp(request.sessionId)
-        if (request.lease === undefined) throw new Error('desktop browser: close requires a Guest lease')
         await browserGuests.closeSessionCdp(request.sessionId, request.lease)
-        return {}
+        return undefined
       }, () => browserGuests.closeAllCdp())
     announceGuestReady = (sessionId) => { host.notifyBrowserGuestReady(sessionId) }
     return {

@@ -3,6 +3,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { join } from 'node:path'
 import type { PlatformSession } from '@deepseek-ai/dsh-deepseek-account'
+import type { BrowserCdpRequest, BrowserCdpCapability, BrowserCdpSuccess, BrowserCdpError, BrowserGuestReady } from '@deepseek-ai/dsh-client-ui-sidebar-browser/types'
 import { desktopNodeEnvironment } from './node-environment.ts'
 
 interface ReadyEvent {
@@ -23,13 +24,7 @@ interface PlatformSessionEvent {
   readonly session: PlatformSession | null
 }
 
-export interface BrowserCdpRequest {
-  readonly type: 'browser-cdp'
-  readonly requestId: number
-  readonly action: 'open' | 'close'
-  readonly sessionId: string
-  readonly lease?: string
-}
+export type { BrowserCdpRequest } from '@deepseek-ai/dsh-client-ui-sidebar-browser/types'
 
 type DesktopHostEvent = ReadyEvent | FatalEvent | PlatformSessionEvent | BrowserCdpRequest | { readonly type: 'shutdown-complete' } | {
   readonly type: 'update-tasks'
@@ -191,7 +186,7 @@ export class DesktopHostProcess {
     private readonly packageManager?: { readonly pnpm: string; readonly nodeBin: string },
 
     private readonly onPlatformSession?: (session: PlatformSession | null) => void,
-    private readonly onBrowserCdp?: (request: BrowserCdpRequest) => Promise<{ endpoint?: string; lease?: string; tabId?: string }>,
+    private readonly onBrowserCdp?: (request: BrowserCdpRequest) => Promise<BrowserCdpCapability | undefined>,
     private readonly onHostClosed?: () => Promise<void>,
   ) {}
 
@@ -233,12 +228,12 @@ export class DesktopHostProcess {
             if (this.onBrowserCdp === undefined) throw new Error('browser bridge unavailable')
             const result = await this.onBrowserCdp(message)
             if (!child.connected) { this.revokeBrowserCdp(); return }
-            child.send({ type: 'browser-cdp-result', requestId: message.requestId, ...result }, (error) => {
+            child.send({ type: 'browser-cdp-result', requestId: message.requestId, ...result } satisfies BrowserCdpSuccess, (error) => {
               if (error !== null) this.revokeBrowserCdp()
             })
           } catch {
             if (child.connected) child.send({ type: 'browser-cdp-result', requestId: message.requestId,
-              error: 'native browser Guest unavailable or ambiguous' })
+              error: 'native browser Guest unavailable or ambiguous' } satisfies BrowserCdpError)
           }
         })()
       }
@@ -271,7 +266,7 @@ export class DesktopHostProcess {
     const child = this.child
     if (!child?.connected) return
     try {
-      child.send({ type: 'browser-guest-ready', sessionId }, (error) => {
+      child.send({ type: 'browser-guest-ready', sessionId } satisfies BrowserGuestReady, (error) => {
         if (error !== null) console.warn('desktop browser: Guest readiness notification failed')
       })
     } catch { console.warn('desktop browser: Guest readiness notification failed') }

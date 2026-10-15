@@ -73,6 +73,44 @@ afterEach(async () => {
 })
 
 describe('desktop host process', () => {
+  it('correlates browser open and close replies over the actual child IPC and revokes on Host exit', async () => {
+    const runtime = projectWithHost(`
+      import { createServer } from 'node:http'
+      const pending = new Map()
+      const server = createServer((request, response) => {
+        const open = request.url === '/open'
+        const requestId = open ? 101 : 102
+        pending.set(requestId, response)
+        process.send({ type: 'browser-cdp', requestId, action: open ? 'open' : 'close',
+          sessionId: 'browser-session', ...open ? {} : { lease: 'browser-lease' } })
+      })
+      server.listen(0, '127.0.0.1', () => {
+        process.send({ type: 'ready', url: 'http://127.0.0.1:' + server.address().port })
+      })
+      process.on('message', message => {
+        if (message.type === 'browser-cdp-result') {
+          pending.get(message.requestId).end(JSON.stringify(message))
+          pending.delete(message.requestId)
+        }
+        if (message.type === 'shutdown') server.close(() => {
+          process.send({ type: 'shutdown-complete' }, () => process.disconnect())
+        })
+      })
+    `)
+    const revoke = vi.fn(async () => {})
+    const bind = vi.fn(async (request: import('../src/host-process.ts').BrowserCdpRequest) => request.action === 'open'
+      ? { endpoint: 'ws://127.0.0.1:12345/cdp/fixture', lease: 'browser-lease', tabId: 'browser-tab' } : undefined)
+    const host = new DesktopHostProcess(process.execPath, runtime, runtime, undefined, process.env, undefined,
+      undefined, undefined, undefined, bind, revoke)
+    hosts.push(host)
+    const { url } = await host.start()
+    expect(await (await fetch(url + '/open')).json()).toMatchObject({ requestId: 101, lease: 'browser-lease', tabId: 'browser-tab' })
+    expect(await (await fetch(url + '/close')).json()).toEqual({ type: 'browser-cdp-result', requestId: 102 })
+    expect(bind.mock.calls.map(([request]) => request.action)).toEqual(['open', 'close'])
+    await host.stop(true)
+    expect(revoke).toHaveBeenCalledOnce()
+  })
+
   it('correlates task inspections and admission changes over private IPC', async () => {
     const host = hostProcess(projectWithHost())
     await expect(host.updateTasks('inspect')).rejects.toThrow('Host is unavailable')
