@@ -66,6 +66,7 @@
     "apps/web/tests/session-inspector.e2e.ts",
     "apps/web/tests/shared-inspector.e2e.ts",
     "apps/web/tests/layout-bottom.e2e.ts",
+    "apps/web/tests/sidebar-pane-targets.e2e.ts",
     "apps/web/tests/devtools-frontend.e2e.ts",
     "apps/web/tests/inspector-panels.e2e.ts",
     "apps/web/tests/inspector-source-build.e2e.ts",

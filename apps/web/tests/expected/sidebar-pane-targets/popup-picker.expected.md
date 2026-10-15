@@ -1,0 +1,7 @@
+- dialog "Dateiziel wählen":
+  - text: Dateiziel wählen · Esc zum Abbrechen
+  - button "Bereich 1 · Files"
+  - button "Bereich 2 · Start" [pressed]
+  - button "Bereich 3 · alpha.md (Fenster)"
+  - button "Standardverhalten wiederherstellen"
+  - button "Abbrechen"

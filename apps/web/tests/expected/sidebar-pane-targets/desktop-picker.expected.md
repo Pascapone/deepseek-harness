@@ -1,0 +1,6 @@
+- dialog "Dateiziel wählen":
+  - text: Dateiziel wählen · Esc zum Abbrechen
+  - button "Bereich 1 · Files"
+  - button "Bereich 2 · Start"
+  - button "Standardverhalten wiederherstellen"
+  - button "Abbrechen"

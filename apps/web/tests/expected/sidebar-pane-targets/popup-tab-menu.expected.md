@@ -1,0 +1,7 @@
+- menu:
+  - menuitem "Close"
+  - menuitem "Open in new window"
+  - menuitem "Close all tabs"
+  - menuitem "Close tabs to the right" [disabled]
+  - menuitem "Close from this tab"
+  - menuitem "Close other tabs" [disabled]

@@ -23,6 +23,7 @@
   // cannot see both sides of the cordis Context merges).
   "exclude": [
     "tests/layout-bottom.e2e.ts",
+    "tests/sidebar-pane-targets.e2e.ts",
     "tests/shortcuts-desktop.e2e.ts",
     "tests/shortcuts-workspace.e2e.ts",
     "tests/shortcuts-panels.e2e.ts",
