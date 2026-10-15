@@ -543,6 +543,23 @@ describe('ConfigForms.get', () => {
     expect(theme.getSnapshot()).toMatchObject({ revision: 1 })
   })
 
+  it('opts an arbitrary namespace into scoped Host persistence without upgrading existing memory forms', async () => {
+    const describeCall = vi.fn().mockResolvedValue(described({ preference: 'dark' }, 7))
+    const ctx = new Context()
+    new TestRemote(ctx, { settings: { describe: describeCall } })
+    const mirror = new SettingsDescribeMirror(ctx, 'memory')
+    const fiber = await ctx.plugin(ConfigForms, { mirror, schema: settingsSchema, persistence: 'memory' }).await()
+    const local = ctx.configForms.get<UiTestSettings>('ui-test')
+    const durable = ctx.configForms.get<UiTestSettings>('ui-test', { persistence: 'host' })
+    await vi.waitFor(() => { expect(durable.getSnapshot()).toMatchObject({ mode: 'host', writable: true, revision: 7 }) })
+    expect(describeCall).toHaveBeenCalledExactlyOnceWith('ui-test')
+    expect(local.getSnapshot()).toMatchObject({ mode: 'memory', writable: false })
+    expect(ctx.configForms.get('ui-test')).toBe(local)
+    expect(ctx.configForms.get('ui-test', { persistence: 'host' })).toBe(durable)
+    expect(ctx.configForms.describe().getSnapshot().view).toBeUndefined()
+    await fiber.dispose()
+  })
+
   it('binds a remote browser in memory mode without starting a settings read', async () => {
     const describeCall = vi.fn()
     const mirror = new SettingsDescribeMirror(ctxWith({ describe: describeCall }), 'memory')

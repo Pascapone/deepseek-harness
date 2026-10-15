@@ -80,12 +80,12 @@ export class SettingsDescribeMirror implements SettingsDescribeFace {
    * @param ctx - the providing plugin's context, whose `remote.settings`
    * namespace answers the describe read.
    * @param persistence - client-selected Host persistence; non-loopback pages may remain process-local.
-   * @param scopedNamespace - explicit retention-only Host read for authenticated remote browsers.
+   * @param scopedNamespace - explicit namespace-scoped Host read for authenticated remote browsers.
    */
   constructor(
     private readonly ctx: ClientContext,
     private readonly persistence: 'host' | 'memory' = 'host',
-    private readonly scopedNamespace?: 'compaction-retention',
+    private readonly scopedNamespace?: string,
   ) {
     this.store = createSnapshotStore<SettingsMirrorSnapshot>({
       status: persistence === 'host' ? 'idle' : 'unavailable',

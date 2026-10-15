@@ -13,7 +13,7 @@ import { resolveConfig, resolveTargetPolicy } from '../src/config.ts'
 import { safeCompactionEnds, selectCompactableRange } from '../src/region.ts'
 import { frameSummary, prepareSummarization } from '../src/summarizer.ts'
 import type { SummarizationInput, SummaryResult } from '../src/summarizer.ts'
-import RetentionSettings from '../src/retention-settings.ts'
+import { TestRetentionSettings as RetentionSettings } from './retention-provider.ts'
 import type { RetentionPreference } from '../src/retention-settings.ts'
 
 const scope = { version: 1, adapter: 'budget-test', projection: 'opaque-v1', provider: 'native', api: 'responses', model: 'budget' } as const

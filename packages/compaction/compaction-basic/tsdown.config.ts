@@ -1,7 +1,7 @@
 import { defineConfig } from 'tsdown'
 
-/** Keep both Loader entries self-contained for published installations. */
-export default defineConfig(['index', 'retention-settings'].map(name => ({
+/** Keep the engine Loader entry self-contained for published installations. */
+export default defineConfig(['index'].map(name => ({
   entry: [`lib/types/${name}.js`],
   outDir: 'lib',
   format: ['esm'] as const,

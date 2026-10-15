@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 This package condenses older history while preserving recent messages. Automatic pressure checks, confirmed-overflow recovery, and `/compact` share the same input accounting. Optional pruning can avoid model calls; otherwise bounded summary requests process the selected history and retain summary text. The system head remains, and tool pairs and jointly measured cost groups cannot be split.
 
+The optional `CompactionRetentionProvider` in the type-only `./retention-settings` export supplies a detached global override and accepts engine-owned synchronous validators. Settings schema, persistence, and UI belong to its provider plugin. With no provider, the engine uses its native configuration. Exact-model overrides still win; operation snapshots, accounting, capacity checks, and safe-history selection remain engine-owned.
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)

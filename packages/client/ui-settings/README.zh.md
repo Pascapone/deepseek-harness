@@ -35,7 +35,7 @@ kind: "package-reference"
 
 ### 跟随被服务的命名空间
 
-`ctx.configForms.get('compaction-retention')` 是普通持久化策略针对远程浏览器的唯一例外。它只请求 `settings.describe('compaction-retention')`，保留宿主修订号和已接受值，并提交普通原子设置操作。其他命名空间仍使用内存模式，不读取或写入宿主。此独立镜像不提供配置文件能力，忽略其他命名空间的应答，访问被拒绝或读取不可用时保持只读，直到重新连接后刷新。回环客户端复用共享表单，不另建镜像。
+`ctx.configForms.get(namespace, { persistence: 'host' })` 显式请求远程浏览器中的单命名空间持久表单，宿主仍决定授权。普通 `get(namespace)` 保留连接的原有持久策略；内存模式下，它与显式持久表单彼此独立。作用域镜像只读取对应命名空间，保留修订号和已接受的值，不暴露配置文件功能，忽略其他命名空间的应答；读取被拒绝或不可用后保持只读，直到成功刷新。回环客户端复用共享表单。
 
 编辑另一个插件所拥有命名空间的页面通过 `ctx.configForms.whileServed(namespaces, register)` 注册：只要所列命名空间中的任一个进入共享镜像，`register` 就运行一次，收到 Host 当前服务的命名空间集合，并返回该注册的 disposer；当它们全都不再被服务，或 `whileServed` 返回的 disposer 被调用时，这个 disposer 就运行。调用方持有返回的 disposer 并把它包进 `ctx.effect`；与 `get` 不同，服务不会在调用方的 context 上注册任何东西。因此从未组合过所有者的部署看不到该页面的任何痕迹，Host 停止服务的命名空间会撤下它。插件页上的四个官方页面各自通过一个伴生包走这条路径。
 

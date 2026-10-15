@@ -72,7 +72,6 @@
     "react": "^18.2.0",
     "@deepseek-ai/dsh-settings": "workspace:*",
     "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-token-meter": "workspace:*",
     "react-dom": "^18.2.0",
     "@deepseek-ai/dsh-client-shortcuts": "workspace:*"
   },

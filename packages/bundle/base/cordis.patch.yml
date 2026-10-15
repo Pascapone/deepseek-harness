@@ -338,8 +338,6 @@
     - id: token-meter
       name: '@deepseek-ai/dsh-token-meter'
 
-    - id: compaction-retention
-      name: '@deepseek-ai/dsh-compaction-basic/retention-settings'
 
     - id: compaction-basic
       name: '@deepseek-ai/dsh-compaction-basic'

@@ -246,6 +246,7 @@ declare module '@deepseek-ai/cordis' {
  */
 export class ConfigForms extends Service {
   private readonly forms = new Map<string, ConfigFormController<unknown>>()
+  private readonly durableForms = new Map<string, ConfigFormController<unknown>>()
   /** Shared developer-tool preference owned by this settings provider. */
   readonly developerTools: DeveloperToolsPreference
   private readonly mirror: SettingsDescribeMirror
@@ -276,8 +277,9 @@ export class ConfigForms extends Service {
     this.owner = ctx
     this.developerTools = new DeveloperToolsPreference(this.get(DEVELOPER_TOOLS_NAMESPACE))
     ctx.effect(() => async () => {
-      await Promise.all([...this.forms.values()].map(form => form.dispose()))
+      await Promise.all([...this.forms.values(), ...this.durableForms.values()].map(form => form.dispose()))
       this.forms.clear()
+      this.durableForms.clear()
     }, 'ui-settings: configuration forms')
   }
 
@@ -293,28 +295,30 @@ export class ConfigForms extends Service {
   }
 
   /** Get the shared form values and write queue for one Host plugin entry.
-   * Remote browsers persist only compaction-retention; all other entries retain memory mode.
+   * A domain may explicitly request scoped Host persistence; Host authorization still applies.
    * @param entryId Unique Host plugin entry id.
+   * @param options Explicit Host persistence for a durable remote-browser preference.
    * @returns The entry's form, owned by this provider.
    */
-  get<T>(entryId: string): ConfigForm<T> {
-    const existing = this.forms.get(entryId)
+  get<T>(entryId: string, options?: { persistence: 'host' }): ConfigForm<T> {
+    const scoped = this.persistence === 'memory' && options?.persistence === 'host'
+    const forms = scoped ? this.durableForms : this.forms
+    const existing = forms.get(entryId)
     if (existing !== undefined) return existing as ConfigFormController<T>
-    const scoped = this.persistence === 'memory' && entryId === 'compaction-retention'
-    const mirror = scoped ? new SettingsDescribeMirror(this.owner, 'host', 'compaction-retention') : this.mirror
+    const mirror = scoped ? new SettingsDescribeMirror(this.owner, 'host', entryId) : this.mirror
     const form = new ConfigFormController<T>(
       this.owner, { namespace: entryId }, mirror, scoped ? 'host' : this.persistence, this.schema,
     )
-    this.forms.set(entryId, form)
+    forms.set(entryId, form)
     if (scoped) this.owner.effect(() => {
       const disposers = [
         this.owner.remote.$on('settings/document-updated', (ns) => {
-          if (ns === 'compaction-retention') void mirror.load()
+          if (ns === entryId) void mirror.load()
         }),
         this.owner.on('connection/reset', () => { void mirror.load() }),
       ]
       return () => { for (const dispose of disposers) dispose() }
-    }, 'ui-settings: remote durable retention')
+    }, 'ui-settings: scoped durable preference')
     void mirror.ensure()
     return form
   }

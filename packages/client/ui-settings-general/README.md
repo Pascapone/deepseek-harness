@@ -45,12 +45,6 @@ The Coding Tools switch controls the shared `ui-settings.enabled` preference des
 
 The General section holds the built-in Coding Tools and Current version rows alongside rows registered into `settings.general.item` by feature packages. Each registrant owns its row copy and behavior. The Appearance row, for example, lives in ui-theme.
 
-### Context & Compaction
-
-Authenticated remote browsers use only the retention-scoped Host settings read and write. A denied or unavailable read leaves this section read-only; the card cannot enable other remote Host settings or save a browser-only substitute.
-
-When the Host serves `compaction-retention`, this section edits the youngest original-history target as fixed tokens or a percentage of the model context window minus answer reserve. Save writes one mode/value pair through the ordinary revision-fenced Settings mutation; switching modes cannot retain a fixed-token override. Use Agent configuration restores the engine's configured retention. Exact-model retention policies take precedence. Running compactions keep their starting snapshot; the next compaction reads the saved value. The target is not a whole-request limit, and indivisible tool groups can make the retained history larger. Connections without durable Host settings cannot save a browser-only substitute.
-
 ### Opening the configuration file
 
 On a loopback browser, the shell renders **Open configuration file** only when the Host confirms that a provider-owned local document can be prepared. The action opens that document in the native text editor (bypassing the browser file association on macOS). Remote browsers never register the action and never issue the privileged settings read.
