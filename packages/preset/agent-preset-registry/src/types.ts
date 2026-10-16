@@ -10,6 +10,8 @@ export interface AgentPresetRow {
   readonly id: string
   /** Whether a session naming no preset composes this one. */
   readonly isDefault: boolean
+  /** Hide only from the new-session picker; still usable for sessions and children. */
+  readonly hiddenFromPicker?: boolean
   /** Display name the preset published. */
   readonly name?: string
   /** One sentence on what this preset is for. */

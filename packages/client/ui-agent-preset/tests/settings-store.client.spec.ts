@@ -29,7 +29,7 @@ interface Recorded { ns: string; ops: unknown }
 
 /** A roster Remote answering a fixed set of rows, or refusing. */
 function fakeRoster(
-  presets: { id: string; isDefault: boolean }[],
+  presets: { id: string; isDefault: boolean; hiddenFromPicker?: boolean; name?: string }[],
   options: {
     failList?: string
     failListCode?: RemoteErrorCode
@@ -59,7 +59,7 @@ function fakeRoster(
 
 /** A context whose roster and settings write outcome the test controls. */
 function fakeApi(
-  presets: { id: string; isDefault: boolean }[],
+  presets: { id: string; isDefault: boolean; hiddenFromPicker?: boolean; name?: string }[],
   options: {
     writes?: Recorded[]
     failWrite?: string
@@ -199,7 +199,7 @@ describe('the agent-preset roster store', () => {
 describe('the new-session chip controller', () => {
   /** A chip over a current session the test can move. */
   function chip(
-    presets: { id: string; isDefault: boolean }[],
+    presets: { id: string; isDefault: boolean; hiddenFromPicker?: boolean; name?: string }[],
     current: SeatSession | undefined | (() => SeatSession | undefined),
     options: {
       writes?: Recorded[]
@@ -263,6 +263,18 @@ describe('the new-session chip controller', () => {
       { id: 'standard' },
       { id: 'minimal' },
     ])
+  })
+
+  it('hides presets only from choices, keeping full display metadata and the actual default', async () => {
+    const controller = chip([
+      { id: 'standard', isDefault: true, hiddenFromPicker: true, name: 'Standard' },
+      { id: 'review', isDefault: false, name: 'Review' },
+    ], undefined)
+    await controller.load()
+    expect(controller.store.getSnapshot()).toMatchObject({
+      current: 'standard', options: [{ id: 'review', name: 'Review' }],
+      displayOptions: [{ id: 'standard', name: 'Standard' }, { id: 'review', name: 'Review' }],
+    })
   })
 
   it('publishes only the newest overlapping roster read', async () => {
